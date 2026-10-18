@@ -44,8 +44,11 @@ impl SundialApp {
         let tray = Tray::new(autostart, cc.egui_ctx.clone());
 
         let hwnd = window_hwnd(cc);
-        if hwnd.is_none() {
-            eprintln!("sundial: no Win32 window handle; the widget's right-click menu is unavailable");
+        match (&tray, hwnd) {
+            (Some(tray), Some(hwnd)) => tray.attach_to(hwnd),
+            _ => eprintln!(
+                "sundial: no Win32 window handle; the widget's right-click menu is unavailable"
+            ),
         }
 
         Self {

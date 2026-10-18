@@ -87,6 +87,17 @@ impl Tray {
         std::mem::take(&mut *self.pending.lock().unwrap())
     }
 
+    /// Subclasses the widget's window so the popup's `WM_COMMAND` is translated
+    /// into a `MenuEvent`. Without this the menu opens and draws correctly, but
+    /// the command goes to winit's window procedure and is silently dropped -
+    /// every item appears dead. Call once, before `show_context_menu`.
+    pub fn attach_to(&self, hwnd: isize) {
+        unsafe {
+            use tray_icon::menu::ContextMenu;
+            self.menu.attach_menu_subclass_for_hwnd(hwnd);
+        }
+    }
+
     /// Pops the same menu as a native Win32 context menu at the cursor.
     ///
     /// The widget cannot use an egui context menu: egui draws menus inside the
