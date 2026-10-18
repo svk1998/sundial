@@ -23,7 +23,6 @@ pub enum Command {
     SetWidgetPos(f32, f32),
     SetAutostart(bool),
     SetWidgetVisible(bool),
-    Flush,
     Quit,
 }
 
@@ -122,7 +121,6 @@ fn run(
                     settings.lock().unwrap().widget_visible = v;
                     dirty = true;
                 }
-                Command::Flush => dirty = true,
                 Command::Quit => quit = true,
             }
         }

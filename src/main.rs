@@ -1,11 +1,47 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
+mod app;
 mod engine;
 mod platform;
-mod store;
 mod stats;
+mod store;
 mod tracker;
+mod tray;
+mod ui;
 
-fn main() {
-    println!("sundial");
+fn main() -> eframe::Result<()> {
+    // Two copies in one session would double-count the user's time.
+    let Some(_guard) = platform::single_instance::acquire() else {
+        return Ok(());
+    };
+
+    let engine = engine::start();
+    let pos = engine.initial_widget_pos;
+    let visible = engine.settings.lock().unwrap().widget_visible;
+
+    let mut viewport = egui::ViewportBuilder::default()
+        .with_inner_size(ui::widget::SIZE)
+        .with_decorations(false)
+        .with_transparent(true)
+        .with_always_on_top()
+        .with_resizable(false)
+        .with_taskbar(false)
+        .with_visible(visible);
+
+    if let Some(p) = pos {
+        viewport = viewport.with_position([p.x, p.y]);
+    }
+
+    eframe::run_native(
+        "Sundial",
+        eframe::NativeOptions {
+            viewport,
+            // Must be set explicitly: `default-features = false` compiles out the
+            // default renderer, and the wgpu backend exits the process silently
+            // on this target before the app is ever created.
+            renderer: eframe::Renderer::Glow,
+            ..Default::default()
+        },
+        Box::new(|cc| Ok(Box::new(app::SundialApp::new(cc, engine)))),
+    )
 }
