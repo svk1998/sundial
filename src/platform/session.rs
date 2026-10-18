@@ -1,8 +1,14 @@
 use super::SystemEvent;
 use std::sync::mpsc::Sender;
 use std::sync::OnceLock;
+use std::time::Duration;
 use windows::core::{w, PCWSTR};
-use windows::Win32::Foundation::{HWND, LPARAM, LRESULT, WPARAM};
+use windows::Win32::Foundation::{
+    GetLastError, ERROR_CLASS_ALREADY_EXISTS, HANDLE, HWND, LPARAM, LRESULT, WPARAM,
+};
+use windows::Win32::System::Power::{
+    RegisterSuspendResumeNotification, UnregisterSuspendResumeNotification,
+};
 use windows::Win32::System::RemoteDesktop::{
     WTSRegisterSessionNotification, WTSUnRegisterSessionNotification, NOTIFY_FOR_THIS_SESSION,
 };
@@ -14,6 +20,9 @@ const WTS_SESSION_LOCK: u32 = 0x7;
 const WTS_SESSION_UNLOCK: u32 = 0x8;
 const WTS_SESSION_LOGON: u32 = 0x5;
 const WTS_SESSION_LOGOFF: u32 = 0x6;
+
+/// How long `spawn` waits for the session thread to report its startup verdict.
+const STARTUP_TIMEOUT: Duration = Duration::from_secs(5);
 
 fn emit(e: SystemEvent) {
     if let Some(tx) = TX.get() {
@@ -50,14 +59,37 @@ unsafe extern "system" fn wndproc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM) 
 
 /// Spawns a thread owning a message-only window that receives session and power
 /// notifications. The thread runs a message pump for the life of the process.
-pub fn spawn(tx: Sender<SystemEvent>) {
+///
+/// Returns `Ok(())` only once the thread has registered the window class, created
+/// the window, and successfully registered for BOTH session-change and
+/// suspend/resume notifications. Any failure is reported here rather than
+/// leaving the caller with a thread pumping an empty queue forever.
+pub fn spawn(tx: Sender<SystemEvent>) -> Result<(), String> {
     let _ = TX.set(tx);
-    std::thread::Builder::new()
+
+    let (status_tx, status_rx) = std::sync::mpsc::channel::<Result<(), String>>();
+
+    let join = std::thread::Builder::new()
         .name("sundial-session".into())
-        .spawn(|| unsafe {
+        .spawn(move || unsafe {
+            // Reports the failure to `spawn` and returns from the thread. If the
+            // caller has already given up (timed out), the send fails silently,
+            // so also print the diagnostic.
+            macro_rules! fail {
+                ($($arg:tt)*) => {{
+                    let m = format!($($arg)*);
+                    eprintln!("sundial: {}", m);
+                    let _ = status_tx.send(Err(m));
+                    return;
+                }};
+            }
+
             let class = w!("SundialSessionWatcher");
-            let hinstance = windows::Win32::System::LibraryLoader::GetModuleHandleW(PCWSTR::null())
-                .expect("GetModuleHandleW");
+            let hinstance =
+                match windows::Win32::System::LibraryLoader::GetModuleHandleW(PCWSTR::null()) {
+                    Ok(h) => h,
+                    Err(e) => fail!("GetModuleHandleW failed: {e}"),
+                };
 
             let wc = WNDCLASSW {
                 lpfnWndProc: Some(wndproc),
@@ -65,9 +97,16 @@ pub fn spawn(tx: Sender<SystemEvent>) {
                 lpszClassName: class,
                 ..Default::default()
             };
-            RegisterClassW(&wc);
+            if RegisterClassW(&wc) == 0 {
+                // A second spawn() in the same process would hit
+                // ERROR_CLASS_ALREADY_EXISTS; that is not a real failure.
+                let err = GetLastError();
+                if err != ERROR_CLASS_ALREADY_EXISTS {
+                    fail!("RegisterClassW failed: {err:?}");
+                }
+            }
 
-            let hwnd = CreateWindowExW(
+            let hwnd = match CreateWindowExW(
                 WINDOW_EX_STYLE(0),
                 class,
                 w!("Sundial"),
@@ -77,16 +116,61 @@ pub fn spawn(tx: Sender<SystemEvent>) {
                 None,
                 hinstance,
                 None,
-            )
-            .expect("CreateWindowExW");
+            ) {
+                Ok(h) => h,
+                Err(e) => fail!("CreateWindowExW failed: {e}"),
+            };
 
-            let _ = WTSRegisterSessionNotification(hwnd, NOTIFY_FOR_THIS_SESSION);
+            // Lock/unlock. WTS posts directly to this HWND, so a message-only
+            // window is fine. Without this registration nothing is ever
+            // delivered and every locked hour counts as present.
+            if let Err(e) = WTSRegisterSessionNotification(hwnd, NOTIFY_FOR_THIS_SESSION) {
+                let _ = DestroyWindow(hwnd);
+                fail!("WTSRegisterSessionNotification failed: {e}");
+            }
+
+            // Suspend/resume. WM_POWERBROADCAST is a broadcast and is NOT
+            // delivered to message-only windows; this opt-in registration is
+            // what makes the power manager post directly to this HWND.
+            // `power_notify` must stay registered as long as the window, so it
+            // is bound here (not a temporary) and only unregistered once the
+            // pump has exited. HPOWERNOTIFY is a plain Copy handle with no
+            // Drop, so the release is explicit.
+            let power_notify =
+                match RegisterSuspendResumeNotification(HANDLE(hwnd.0), DEVICE_NOTIFY_WINDOW_HANDLE)
+                {
+                    Ok(h) => h,
+                    Err(e) => {
+                        let _ = WTSUnRegisterSessionNotification(hwnd);
+                        let _ = DestroyWindow(hwnd);
+                        fail!("RegisterSuspendResumeNotification failed: {e}");
+                    }
+                };
+
+            let _ = status_tx.send(Ok(()));
 
             let mut msg = MSG::default();
             while GetMessageW(&mut msg, None, 0, 0).as_bool() {
                 let _ = TranslateMessage(&msg);
                 DispatchMessageW(&msg);
             }
-        })
-        .expect("spawn session thread");
+
+            let _ = UnregisterSuspendResumeNotification(power_notify);
+        });
+
+    if let Err(e) = join {
+        let m = format!("could not start session thread: {e}");
+        eprintln!("sundial: {m}");
+        return Err(m);
+    }
+
+    match status_rx.recv_timeout(STARTUP_TIMEOUT) {
+        Ok(Ok(())) => Ok(()),
+        Ok(Err(m)) => Err(m),
+        Err(e) => {
+            let m = format!("session thread did not report startup within {STARTUP_TIMEOUT:?}: {e}");
+            eprintln!("sundial: {m}");
+            Err(m)
+        }
+    }
 }
