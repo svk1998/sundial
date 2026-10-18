@@ -69,7 +69,11 @@ The displayed state is derived for the status dot only:
 
 Sleep is handled without a third flag. `PBT_APMSUSPEND` flushes the store and records the suspend. On `PBT_APMRESUMEAUTOMATIC` / `PBT_APMRESUMESUSPEND`, the tracker resets the tick baseline and sets `present = false`, crediting nothing for the sleep interval. It makes no guess about lock state: if the machine resumed to a lock screen, `locked` is already true or the lock event arrives normally; if it resumed unlocked, the next user input sets `present` and counting restarts. Either way the worst case is losing a few seconds, never gaining any. The delta clamp below is the independent backstop for a sleep where no power event arrived at all.
 
-Lock/unlock and power events are delivered by a dedicated background thread that owns a **message-only window** (`HWND_MESSAGE`) registered via `WTSRegisterSessionNotification` and receiving `WM_POWERBROADCAST`. Events are pushed to the tracker over a channel. This is the supported Windows mechanism; the app does not poll for lock state.
+Lock/unlock and power events are delivered by a dedicated background thread that owns a **message-only window** (`HWND_MESSAGE`) registered via `WTSRegisterSessionNotification`. Events are pushed to the tracker over a channel. This is the supported Windows mechanism; the app does not poll for lock state.
+
+**Power events need their own registration.** A message-only window does not receive broadcast messages, and `PBT_APMSUSPEND`/`PBT_APMRESUME*` are broadcast to top-level windows — so `WM_POWERBROADCAST` would never arrive on its own. The window additionally calls `RegisterSuspendResumeNotification(hwnd, DEVICE_NOTIFY_WINDOW_HANDLE)`, which delivers power notifications directly to the named HWND, and holds the returned `HPOWERNOTIFY` for the window's lifetime.
+
+**Startup failures are observable.** `session::spawn` returns `Result<(), String>`: the thread reports the outcome of class registration, window creation, and both notification registrations over a one-shot channel before entering its message pump. Without this, a failed registration would leave the app pumping an empty queue — recording a locked machine as present, forever, with no indication anything was wrong.
 
 Idle is sampled once per second with `GetLastInputInfo`.
 
@@ -110,7 +114,11 @@ Single JSON file at `%APPDATA%\Sundial\data.json`.
 
 **Corruption recovery.** If the file is missing, empty, or fails to parse, it is renamed to `data.json.corrupt-<unix-ts>` and a fresh store is created. Startup never fails on bad data.
 
-**Single instance.** A named mutex (`Global\Sundial.SingleInstance`) is acquired at startup. If it is already held, the second process signals the first to show its widget and exits. Two running copies would double-count.
+**Single instance.** A named mutex (`Local\Sundial.SingleInstance`) is acquired at startup. If it is already held, the second process signals the first to show its widget and exits. Two running copies **in the same session** would double-count.
+
+The namespace is `Local\`, not `Global\`. The requirement is per-session, not machine-wide: on a shared machine, RDP host, or with fast user switching, a second *user* has their own `%APPDATA%`, their own session, and their own presence to track — a machine-wide mutex would stop their Sundial from starting at all. `Local\` also sidesteps `SeCreateGlobalPrivilege` and the default-DACL access-denied failure that `Global\` objects hit across users.
+
+Acquisition **fails open**: only `ERROR_ALREADY_EXISTS` means "already running". Any other `CreateMutexW` failure lets the app start anyway, because silently never starting is strictly worse than the edge-case risk of a second copy.
 
 ## Statistics
 
