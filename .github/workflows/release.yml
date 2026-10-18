@@ -38,10 +38,12 @@ jobs:
           Copy-Item target/x86_64-pc-windows-msvc/release/sundial.exe "$dist/sundial-$tag-x86_64-windows.exe"
           Compress-Archive -Path target/x86_64-pc-windows-msvc/release/sundial.exe, README.md `
             -DestinationPath "$dist/sundial-$tag-x86_64-windows.zip"
-          Get-ChildItem $dist -File | ForEach-Object {
+          # Materialise the list first so the sums file isn't picked up while it's being written.
+          $sums = @(Get-ChildItem $dist -File) | ForEach-Object {
             $hash = (Get-FileHash $_.FullName -Algorithm SHA256).Hash.ToLower()
             "$hash  $($_.Name)"
-          } | Out-File -Encoding ascii "$dist/SHA256SUMS.txt"
+          }
+          $sums | Out-File -Encoding ascii "$dist/SHA256SUMS.txt"
 
       - name: Create release
         shell: pwsh
