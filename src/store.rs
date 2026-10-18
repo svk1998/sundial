@@ -58,7 +58,11 @@ impl Store {
     pub fn load(path: &Path) -> Store {
         let text = match std::fs::read_to_string(path) {
             Ok(t) => t,
-            Err(_) => return Store::default(),
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Store::default(),
+            Err(_) => {
+                quarantine(path);
+                return Store::default();
+            }
         };
         match serde_json::from_str::<Dto>(&text) {
             Ok(dto) => Store {
@@ -174,6 +178,23 @@ mod tests {
             .filter(|e| e.file_name().to_string_lossy().contains("corrupt"))
             .collect();
         assert_eq!(quarantined.len(), 1, "corrupt file should be renamed aside");
+    }
+
+    #[test]
+    fn non_utf8_file_is_quarantined_and_recovered() {
+        let dir = tempdir();
+        let path = dir.join("data.json");
+        std::fs::write(&path, [0xff, 0xfe, 0x00, 0x80]).unwrap();
+
+        let s = Store::load(&path);
+        assert!(s.days.is_empty());
+
+        let quarantined: Vec<_> = std::fs::read_dir(&dir)
+            .unwrap()
+            .filter_map(|e| e.ok())
+            .filter(|e| e.file_name().to_string_lossy().contains("corrupt"))
+            .collect();
+        assert_eq!(quarantined.len(), 1, "unreadable (non-UTF-8) file should be renamed aside");
     }
 
     #[test]
