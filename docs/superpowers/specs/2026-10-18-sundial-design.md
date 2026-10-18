@@ -44,6 +44,7 @@ These rules define what the number means. Everything else in the system exists t
 
 - Time accrues **only** while the session is unlocked *and* the user has produced input within the idle timeout.
 - The idle timeout defaults to **300 seconds** (5 minutes). Returning from idle is immediate on the first input event; the idle period itself is never credited retroactively.
+- **The guarantee is bounded, and the bound is stated deliberately:** recorded time may exceed actual presence by at most **one idle timeout per absence**, and can never exceed it by more. Presence is evaluated once per tick with no retroactive correction, so walking away without locking credits the full 5-minute window before the clock pauses. This grace window is intentional — it is what stops the timer pausing while you read a long document — but it means the number measures *presence with a grace window*, not literal keyboard activity. The alternative (deducting `min(idle_timeout, accrued)` when presence flips false) was considered and rejected: a timer that visibly jumps backwards by five minutes reads as a bug.
 - Totals are per **local calendar day** and reset at local midnight.
 - A tracking period crossing midnight is **split at the boundary**, with each portion credited to its own date.
 - Elapsed time is measured on the **monotonic clock**. Wall-clock time is used only to decide which date a measurement belongs to.
@@ -206,7 +207,7 @@ lock/unlock · sleep/resume · leave idle 5 minutes then return · crash recover
 
 ## Decisions recorded
 
-- Idle timeout 5 minutes, configurable in `data.json`, no settings UI in v1.
+- Idle timeout 5 minutes, configurable in `data.json`, no settings UI in v1. Its over-credit bound (one timeout per absence) is accepted and documented rather than corrected — see the time-accounting rules above.
 - History retained forever.
 - Autostart off by default.
 - "This week" is a calendar week starting Monday.

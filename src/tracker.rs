@@ -1,3 +1,29 @@
+//! Presence accounting.
+//!
+//! # What the recorded number guarantees
+//!
+//! Time accrues if and only if the session is unlocked and the user has produced
+//! input within the idle timeout. Sleep, suspension, crashes and wall-clock jumps
+//! cannot inflate it — see [`MAX_TICK_DELTA`].
+//!
+//! It is **not** a measure of literal keyboard-and-mouse activity, and the
+//! difference is worth stating precisely:
+//!
+//! > Recorded time may exceed actual presence by at most one `idle_timeout` per
+//! > absence, and can never exceed it by more.
+//!
+//! Presence is evaluated once per tick with no retroactive correction, so walking
+//! away without locking credits the full idle timeout (5 minutes by default)
+//! before the clock pauses. That grace window is deliberate — it is what stops the
+//! timer pausing while you read a long document — but it means a user who touches
+//! the machine once every six minutes would accrue nearly a full day.
+//!
+//! If a tighter number is ever wanted, the fix is to deduct
+//! `min(idle_timeout, accrued_today)` on the tick where presence flips false; the
+//! `idle` argument to [`Tracker::tick`] already carries the information needed.
+//! That was considered and deliberately not done, because a timer that visibly
+//! jumps backwards by five minutes reads as a bug.
+
 use chrono::{DateTime, Local, NaiveDate, TimeZone};
 use std::time::Duration;
 
@@ -17,8 +43,10 @@ pub struct Tracker {
     idle_timeout: Duration,
     locked: bool,
     present: bool,
-    /// Monotonic + wall reading of the previous tick, and whether time was
-    /// accruing during the interval that ended at that tick.
+    /// Monotonic reading at the previous tick. The previous tick's *wall* clock is
+    /// deliberately not stored: `split_at_midnight` reconstructs the interval start
+    /// from the monotonic delta instead, so a jumped wall clock cannot change how
+    /// much time is credited — only which date it lands on.
     last: Option<Duration>,
     counting_since_last_tick: bool,
 }
