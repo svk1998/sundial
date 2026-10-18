@@ -1,4 +1,5 @@
 use crate::engine::{Command, Engine};
+use crate::platform::monitor;
 use crate::tray::{Tray, TrayAction};
 use crate::ui::{analytics, theme, widget};
 use chrono::Datelike;
@@ -16,6 +17,9 @@ fn window_hwnd(cc: &eframe::CreationContext<'_>) -> Option<isize> {
 /// Clicking the widget while the panel is focused fires both "panel lost focus"
 /// and "widget clicked", which would close and immediately reopen it. Ignore a
 /// toggle for this long after the panel closes.
+/// Title of the analytics viewport, used to find its native window.
+const PANEL_TITLE: &str = "Sundial Analytics";
+
 const REOPEN_GUARD: Duration = Duration::from_millis(150);
 
 pub struct SundialApp {
@@ -45,9 +49,15 @@ impl SundialApp {
         // The tray must be built on the thread running the winit message loop.
         // It pumps its own events on a background thread and wakes us via the
         // context, so it keeps working while the widget is hidden.
-        let tray = Tray::new(autostart, cc.egui_ctx.clone());
-
         let hwnd = window_hwnd(cc);
+        if let (Some(hwnd), Some(p)) = (hwnd, engine.initial_widget_pos) {
+            let pos = egui::pos2(p.x, p.y);
+            if monitor::is_on_screen(egui::Rect::from_min_size(pos, widget::SIZE)) {
+                monitor::move_window(hwnd, pos);
+            }
+        }
+        let tray = Tray::new(autostart, cc.egui_ctx.clone(), hwnd);
+
         match (&tray, hwnd) {
             (Some(tray), Some(hwnd)) => tray.attach_to(hwnd),
             _ => eprintln!(
@@ -133,6 +143,13 @@ impl eframe::App for SundialApp {
             }
         }
 
+        // The tray pump shows a hidden window to get this frame to run at all.
+        // The analytics panel is drawn from inside this window's frame, so the
+        // window must stay up while the panel is open; otherwise put it back.
+        if !self.widget_visible && !self.panel_open {
+            ctx.send_viewport_cmd(ViewportCommand::Visible(false));
+        }
+
         let snap = self.engine.snapshot.lock().unwrap().clone();
 
         egui::CentralPanel::default()
@@ -150,8 +167,9 @@ impl eframe::App for SundialApp {
                 widget::WidgetAction::None => {}
             });
 
-        // Persist the widget position whenever the OS drag finishes.
-        if let Some(rect) = ctx.input(|i| i.viewport().outer_rect) {
+        // Persist the widget position whenever the OS drag finishes, in
+        // physical pixels - see `monitor::window_rect`.
+        if let Some(rect) = self.hwnd.and_then(monitor::window_rect) {
             let pos = rect.min;
             if self.last_pos.is_none_or(|p| p != pos) {
                 self.last_pos = Some(pos);
@@ -170,16 +188,20 @@ impl eframe::App for SundialApp {
 
 impl SundialApp {
     fn show_panel(&mut self, ctx: &egui::Context, snap: &crate::engine::Snapshot) {
-        let widget_rect = ctx
-            .input(|i| i.viewport().outer_rect)
+        let widget_rect = self
+            .hwnd
+            .and_then(monitor::window_rect)
             .unwrap_or(egui::Rect::from_min_size(egui::Pos2::ZERO, widget::SIZE));
-        let pos = crate::platform::monitor::bottom_right_for(widget_rect, analytics::SIZE);
+        // Physical pixels in, but egui scales `with_position` by this.
+        let ppp = ctx.input(|i| i.viewport().native_pixels_per_point.unwrap_or(1.0));
+        let pos = monitor::bottom_right_for(widget_rect, analytics::SIZE) / ppp;
         let today_index = chrono::Local::now()
             .date_naive()
             .weekday()
             .num_days_from_monday() as usize;
 
         let builder = egui::ViewportBuilder::default()
+            .with_title(PANEL_TITLE)
             .with_inner_size(analytics::SIZE)
             .with_position([pos.x, pos.y])
             .with_decorations(false)
@@ -214,6 +236,19 @@ impl SundialApp {
                 focused_now = ctx.input(|i| i.viewport().focused.unwrap_or(false));
             },
         );
+
+        // egui sizes and positions new viewports using the primary monitor's
+        // scale, so the position above is only a first guess whenever the
+        // widget sits on a monitor with different scaling. Correct it from the
+        // panel's real physical size once its window exists.
+        if let Some(panel) = monitor::find_window(PANEL_TITLE) {
+            if let Some(rect) = monitor::window_rect(panel) {
+                let target = monitor::bottom_right_for(widget_rect, rect.size());
+                if rect.min != target {
+                    monitor::move_window(panel, target);
+                }
+            }
+        }
 
         if focused_now {
             self.panel_focused_once = true;

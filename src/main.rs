@@ -16,10 +16,12 @@ fn main() -> eframe::Result<()> {
     };
 
     let engine = engine::start();
-    let pos = engine.initial_widget_pos;
     let visible = engine.settings.lock().unwrap().widget_visible;
 
-    let mut viewport = egui::ViewportBuilder::default()
+    // No `with_position`: egui scales it by the primary monitor's DPI, which
+    // misplaces a widget saved on a monitor with different scaling. The app
+    // restores the saved position itself, in physical pixels.
+    let viewport = egui::ViewportBuilder::default()
         .with_inner_size(ui::widget::SIZE)
         .with_decorations(false)
         .with_transparent(true)
@@ -27,10 +29,6 @@ fn main() -> eframe::Result<()> {
         .with_resizable(false)
         .with_taskbar(false)
         .with_visible(visible);
-
-    if let Some(p) = pos {
-        viewport = viewport.with_position([p.x, p.y]);
-    }
 
     eframe::run_native(
         "Sundial",

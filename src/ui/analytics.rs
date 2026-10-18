@@ -6,7 +6,7 @@ use chrono::Datelike;
 use egui::{FontId, RichText, Vec2};
 use std::time::Duration;
 
-pub const SIZE: Vec2 = Vec2::new(320.0, 400.0);
+pub const SIZE: Vec2 = Vec2::new(320.0, 290.0);
 
 pub fn show(ui: &mut egui::Ui, summary: &Summary, state: DerivedState, today_index: usize) {
     ui.add_space(14.0);
@@ -42,8 +42,14 @@ pub fn show(ui: &mut egui::Ui, summary: &Summary, state: DerivedState, today_ind
     ui.add_space(16.0);
     ui.horizontal(|ui| {
         ui.add_space(12.0);
-        ui.vertical(|ui| chart::show(ui, &summary.week_series, today_index));
-        ui.add_space(12.0);
+        // Leave the right margin inside the panel. Spacing added after a
+        // full-width chart lands past the edge, and egui then widens the layout
+        // for everything below it - clipping the right-aligned history times.
+        let width = ui.available_width() - 12.0;
+        ui.vertical(|ui| {
+            ui.set_width(width);
+            chart::show(ui, &summary.week_series, today_index);
+        });
     });
 
     ui.add_space(10.0);

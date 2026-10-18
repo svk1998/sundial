@@ -37,7 +37,7 @@ struct Ids {
 }
 
 impl Tray {
-    pub fn new(autostart: bool, ctx: egui::Context) -> Option<Tray> {
+    pub fn new(autostart: bool, ctx: egui::Context, hwnd: Option<isize>) -> Option<Tray> {
         let toggle = MenuItem::new("Show/Hide widget", true, None);
         let analytics = MenuItem::new("Analytics", true, None);
         let autostart_item = CheckMenuItem::new("Start with Windows", true, autostart, None);
@@ -72,7 +72,7 @@ impl Tray {
         };
 
         let pending = Arc::new(Mutex::new(Vec::new()));
-        spawn_pump(ids, Arc::clone(&pending), ctx);
+        spawn_pump(ids, Arc::clone(&pending), ctx, hwnd);
 
         Some(Tray {
             _icon: icon,
@@ -117,7 +117,12 @@ impl Tray {
 /// loop. A hidden widget never repaints, so polling from `update` would stop the
 /// moment the widget was hidden - leaving the tray icon, the only way to bring it
 /// back, permanently dead.
-fn spawn_pump(ids: Ids, pending: Arc<Mutex<Vec<TrayAction>>>, ctx: egui::Context) {
+fn spawn_pump(
+    ids: Ids,
+    pending: Arc<Mutex<Vec<TrayAction>>>,
+    ctx: egui::Context,
+    hwnd: Option<isize>,
+) {
     std::thread::Builder::new()
         .name("sundial-tray".into())
         .spawn(move || {
@@ -151,7 +156,13 @@ fn spawn_pump(ids: Ids, pending: Arc<Mutex<Vec<TrayAction>>>, ctx: egui::Context
 
             if !queued.is_empty() {
                 pending.lock().unwrap().extend(queued);
-                // Wake the event loop: it may be idle with nothing to draw.
+                // A repaint request alone cannot wake a hidden window: eframe
+                // only runs `update` on WM_PAINT, which Windows never sends to an
+                // invisible window. Show it (without taking focus) so `update`
+                // runs; it re-hides the widget if that is the resulting state.
+                if let Some(hwnd) = hwnd {
+                    wake_hidden_window(hwnd);
+                }
                 ctx.request_repaint();
             }
 
@@ -159,4 +170,15 @@ fn spawn_pump(ids: Ids, pending: Arc<Mutex<Vec<TrayAction>>>, ctx: egui::Context
             }
         })
         .expect("spawn tray pump thread");
+}
+
+fn wake_hidden_window(hwnd: isize) {
+    use windows::Win32::Foundation::HWND;
+    use windows::Win32::UI::WindowsAndMessaging::{IsWindowVisible, ShowWindowAsync, SW_SHOWNOACTIVATE};
+    let hwnd = HWND(hwnd as *mut core::ffi::c_void);
+    unsafe {
+        if !IsWindowVisible(hwnd).as_bool() {
+            let _ = ShowWindowAsync(hwnd, SW_SHOWNOACTIVATE);
+        }
+    }
 }
