@@ -6,6 +6,22 @@ Time counts while your session is unlocked and you have used the keyboard or mou
 within the last 5 minutes. Locking, sleeping, or walking away pauses it. Totals reset
 at local midnight; a stretch crossing midnight is split across both days.
 
+## Install
+
+Download `sundial-vX.Y.Z-setup.exe` from the
+[latest release](https://github.com/svk1998/sundial/releases/latest) and run it. No admin
+rights needed: it installs for your user only, adds a Start menu entry, optionally starts
+with Windows, and launches Sundial. Running a newer setup upgrades in place and keeps
+your history.
+
+Windows SmartScreen may warn that the app is unrecognised (it isn't code-signed yet):
+choose **More info → Run anyway**.
+
+To uninstall, use **Settings → Apps → Sundial**. It closes Sundial, removes the autostart
+entry, and asks whether to delete your history too.
+
+Prefer no installer? The release also has a portable `sundial-vX.Y.Z-x86_64-windows.exe`.
+
 ## Usage
 
 - The floating widget shows today's total. Drag to move, click to open analytics.
@@ -40,7 +56,10 @@ Requires the MSVC Rust toolchain and Visual Studio Build Tools (C++ workload).
 
     cargo build --release
 
-Output: `target/release/sundial.exe` — self-contained, no installer.
+Output: `target/release/sundial.exe` — self-contained.
+
+Installer: `installer/sundial.iss` (Inno Setup 6). The release workflow builds it on
+every `v*` tag push; locally, `iscc installer\sundial.iss` writes it to `dist/`.
 
 Note: the renderer must be glow. The wgpu backend exits the process silently on
 this target before the app is created.

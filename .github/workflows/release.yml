@@ -45,6 +45,31 @@ jobs:
           }
           $sums | Out-File -Encoding ascii "$dist/SHA256SUMS.txt"
 
+      # Pinned so a new Inno Setup major can't change the build under us; portable mode
+      # extracts it without registering an install.
+      - name: Install Inno Setup
+        shell: pwsh
+        run: |
+          $setup = "$env:RUNNER_TEMP\innosetup.exe"
+          Invoke-WebRequest https://github.com/jrsoftware/issrc/releases/download/is-6_7_3/innosetup-6.7.3.exe -OutFile $setup
+          $p = Start-Process $setup -ArgumentList "/VERYSILENT", "/SUPPRESSMSGBOXES", "/NORESTART", "/SP-", `
+            "/CURRENTUSER", "/PORTABLE=1", "/NOICONS", "/DIR=$env:RUNNER_TEMP\inno" -PassThru
+          $p.WaitForExit()
+          if (-not (Test-Path "$env:RUNNER_TEMP\inno\ISCC.exe")) { throw "Inno Setup install failed" }
+
+      - name: Build installer
+        shell: pwsh
+        run: |
+          $version = "${{ github.ref_name }}".TrimStart("v")
+          & "$env:RUNNER_TEMP\inno\ISCC.exe" `
+            "/DAppVersion=$version" `
+            "/DSourceExe=..\target\x86_64-pc-windows-msvc\release\sundial.exe" `
+            installer\sundial.iss
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          $setup = Get-Item "dist/sundial-v$version-setup.exe"
+          $hash = (Get-FileHash $setup.FullName -Algorithm SHA256).Hash.ToLower()
+          "$hash  $($setup.Name)" | Out-File -Append -Encoding ascii "dist/SHA256SUMS.txt"
+
       - name: Create release
         shell: pwsh
         env:

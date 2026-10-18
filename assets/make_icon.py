@@ -1,7 +1,8 @@
 """Draws the Sundial tray icon.
 
 Usage: python assets/make_icon.py assets/icon.png
-Also writes preview.png (the icon at tray sizes on dark and light taskbars)
+Also writes icon.ico next to it (multi-size, for the installer and shortcuts)
+and preview.png (the icon at tray sizes on dark and light taskbars)
 to the current directory.
 """
 import math, sys
@@ -42,6 +43,7 @@ d.ellipse([c - dot, c - dot, c + dot, c + dot], fill=TICK)
 
 out = sys.argv[1]
 im.resize((64, 64), Image.LANCZOS).save(out)
+im.save(out.rsplit(".", 1)[0] + ".ico", sizes=[(16, 16), (20, 20), (24, 24), (32, 32), (48, 48), (64, 64), (256, 256)])
 
 # Preview sheet at real tray sizes on light and dark taskbars.
 sizes = [16, 20, 24, 32, 64]
