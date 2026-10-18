@@ -1,9 +1,12 @@
+use std::sync::{Arc, Mutex};
+use std::time::Duration;
 use tray_icon::menu::{CheckMenuItem, Menu, MenuEvent, MenuId, MenuItem, PredefinedMenuItem};
 use tray_icon::{TrayIcon, TrayIconBuilder, TrayIconEvent};
 
+const POLL_INTERVAL: Duration = Duration::from_millis(100);
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum TrayAction {
-    None,
     ToggleWidget,
     ShowAnalytics,
     ToggleAutostart,
@@ -14,10 +17,7 @@ pub enum TrayAction {
 /// present for the whole life of the process.
 pub struct Tray {
     _icon: TrayIcon,
-    toggle_id: MenuId,
-    analytics_id: MenuId,
-    autostart_id: MenuId,
-    quit_id: MenuId,
+    pending: Arc<Mutex<Vec<TrayAction>>>,
     pub autostart_item: CheckMenuItem,
 }
 
@@ -28,8 +28,15 @@ fn load_icon() -> Option<tray_icon::Icon> {
     tray_icon::Icon::from_rgba(image.into_raw(), w, h).ok()
 }
 
+struct Ids {
+    toggle: MenuId,
+    analytics: MenuId,
+    autostart: MenuId,
+    quit: MenuId,
+}
+
 impl Tray {
-    pub fn new(autostart: bool) -> Option<Tray> {
+    pub fn new(autostart: bool, ctx: egui::Context) -> Option<Tray> {
         let toggle = MenuItem::new("Show/Hide widget", true, None);
         let analytics = MenuItem::new("Analytics", true, None);
         let autostart_item = CheckMenuItem::new("Start with Windows", true, autostart, None);
@@ -56,45 +63,71 @@ impl Tray {
             }
         };
 
+        let ids = Ids {
+            toggle: toggle.id().clone(),
+            analytics: analytics.id().clone(),
+            autostart: autostart_item.id().clone(),
+            quit: quit.id().clone(),
+        };
+
+        let pending = Arc::new(Mutex::new(Vec::new()));
+        spawn_pump(ids, Arc::clone(&pending), ctx);
+
         Some(Tray {
             _icon: icon,
-            toggle_id: toggle.id().clone(),
-            analytics_id: analytics.id().clone(),
-            autostart_id: autostart_item.id().clone(),
-            quit_id: quit.id().clone(),
+            pending,
             autostart_item,
         })
     }
 
-    /// Drains tray and menu events. Call once per frame.
-    pub fn poll(&self) -> TrayAction {
-        let mut action = TrayAction::None;
-
-        while let Ok(event) = TrayIconEvent::receiver().try_recv() {
-            if let TrayIconEvent::Click {
-                button: tray_icon::MouseButton::Left,
-                button_state: tray_icon::MouseButtonState::Up,
-                ..
-            } = event
-            {
-                action = TrayAction::ToggleWidget;
-            }
-        }
-
-        while let Ok(MenuEvent { id }) = MenuEvent::receiver().try_recv() {
-            action = if id == self.toggle_id {
-                TrayAction::ToggleWidget
-            } else if id == self.analytics_id {
-                TrayAction::ShowAnalytics
-            } else if id == self.autostart_id {
-                TrayAction::ToggleAutostart
-            } else if id == self.quit_id {
-                TrayAction::Quit
-            } else {
-                action
-            };
-        }
-
-        action
+    /// Takes everything the pump has queued since the last call.
+    pub fn take_actions(&self) -> Vec<TrayAction> {
+        std::mem::take(&mut *self.pending.lock().unwrap())
     }
+}
+
+/// Tray events are pumped on their own thread rather than from the egui update
+/// loop. A hidden widget never repaints, so polling from `update` would stop the
+/// moment the widget was hidden - leaving the tray icon, the only way to bring it
+/// back, permanently dead.
+fn spawn_pump(ids: Ids, pending: Arc<Mutex<Vec<TrayAction>>>, ctx: egui::Context) {
+    std::thread::Builder::new()
+        .name("sundial-tray".into())
+        .spawn(move || loop {
+            let mut queued = Vec::new();
+
+            while let Ok(event) = TrayIconEvent::receiver().try_recv() {
+                // Left click toggles. A double click arrives as two Up events and
+                // therefore toggles twice, which is the honest interpretation.
+                if let TrayIconEvent::Click {
+                    button: tray_icon::MouseButton::Left,
+                    button_state: tray_icon::MouseButtonState::Up,
+                    ..
+                } = event
+                {
+                    queued.push(TrayAction::ToggleWidget);
+                }
+            }
+
+            while let Ok(MenuEvent { id }) = MenuEvent::receiver().try_recv() {
+                if id == ids.toggle {
+                    queued.push(TrayAction::ToggleWidget);
+                } else if id == ids.analytics {
+                    queued.push(TrayAction::ShowAnalytics);
+                } else if id == ids.autostart {
+                    queued.push(TrayAction::ToggleAutostart);
+                } else if id == ids.quit {
+                    queued.push(TrayAction::Quit);
+                }
+            }
+
+            if !queued.is_empty() {
+                pending.lock().unwrap().extend(queued);
+                // Wake the event loop: it may be idle with nothing to draw.
+                ctx.request_repaint();
+            }
+
+            std::thread::sleep(POLL_INTERVAL);
+        })
+        .expect("spawn tray pump thread");
 }

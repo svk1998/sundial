@@ -45,9 +45,13 @@ pub fn show(ui: &mut egui::Ui, snap: &Snapshot) -> WidgetAction {
     let response = ui.interact(rect, ui.id().with("widget"), Sense::click_and_drag());
 
     let mut action = WidgetAction::None;
+    // Primary button only. egui senses drags from any button, so reacting to a
+    // plain `drag_started()` would start an OS drag loop on right-press and
+    // swallow the context menu below before it could open.
+    //
     // egui's built-in drag threshold separates a click from a drag, so a small
     // wobble while clicking still opens the panel rather than moving the widget.
-    if response.drag_started() {
+    if response.drag_started_by(egui::PointerButton::Primary) {
         action = WidgetAction::StartDrag;
     } else if response.clicked() {
         action = WidgetAction::TogglePanel;

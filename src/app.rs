@@ -29,7 +29,9 @@ impl SundialApp {
         };
 
         // The tray must be built on the thread running the winit message loop.
-        let tray = Tray::new(autostart);
+        // It pumps its own events on a background thread and wakes us via the
+        // context, so it keeps working while the widget is hidden.
+        let tray = Tray::new(autostart, cc.egui_ctx.clone());
 
         Self {
             engine,
@@ -85,8 +87,13 @@ impl eframe::App for SundialApp {
         // The clock must keep ticking visually even when nothing is interacted with.
         ctx.request_repaint_after(Duration::from_millis(500));
 
-        if let Some(tray) = &self.tray {
-            match tray.poll() {
+        let tray_actions = self
+            .tray
+            .as_ref()
+            .map(|t| t.take_actions())
+            .unwrap_or_default();
+        for action in tray_actions {
+            match action {
                 TrayAction::ToggleWidget => {
                     let next = !self.widget_visible;
                     self.set_widget_visible(ctx, next);
@@ -97,7 +104,6 @@ impl eframe::App for SundialApp {
                     self.set_autostart(!now);
                 }
                 TrayAction::Quit => self.quit(ctx),
-                TrayAction::None => {}
             }
         }
 
