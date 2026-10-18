@@ -120,7 +120,8 @@ impl Tray {
 fn spawn_pump(ids: Ids, pending: Arc<Mutex<Vec<TrayAction>>>, ctx: egui::Context) {
     std::thread::Builder::new()
         .name("sundial-tray".into())
-        .spawn(move || loop {
+        .spawn(move || {
+            loop {
             let mut queued = Vec::new();
 
             while let Ok(event) = TrayIconEvent::receiver().try_recv() {
@@ -154,7 +155,8 @@ fn spawn_pump(ids: Ids, pending: Arc<Mutex<Vec<TrayAction>>>, ctx: egui::Context
                 ctx.request_repaint();
             }
 
-            std::thread::sleep(POLL_INTERVAL);
+                std::thread::sleep(POLL_INTERVAL);
+            }
         })
         .expect("spawn tray pump thread");
 }

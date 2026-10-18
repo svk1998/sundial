@@ -24,6 +24,10 @@ pub struct SundialApp {
     panel_open: bool,
     closed_at: Option<Instant>,
     widget_visible: bool,
+    /// The panel closes on focus loss, but it does not hold focus on the frame
+    /// it is created - the widget still does. Without this latch it would
+    /// dismiss itself immediately and could never be seen.
+    panel_focused_once: bool,
     last_pos: Option<egui::Pos2>,
     /// The widget's native window, needed to pop a Win32 context menu.
     hwnd: Option<isize>,
@@ -57,6 +61,7 @@ impl SundialApp {
             panel_open: false,
             closed_at: None,
             widget_visible,
+            panel_focused_once: false,
             last_pos: None,
             hwnd,
         }
@@ -74,14 +79,16 @@ impl SundialApp {
         self.closed_at = Some(Instant::now());
     }
 
+    fn open_panel(&mut self) {
+        self.panel_open = true;
+        self.panel_focused_once = false;
+    }
+
     fn toggle_panel(&mut self) {
         if self.panel_open {
             self.close_panel();
-        } else if self
-            .closed_at
-            .is_none_or(|t| t.elapsed() >= REOPEN_GUARD)
-        {
-            self.panel_open = true;
+        } else if self.closed_at.is_none_or(|t| t.elapsed() >= REOPEN_GUARD) {
+            self.open_panel();
         }
     }
 
@@ -117,7 +124,7 @@ impl eframe::App for SundialApp {
                     let next = !self.widget_visible;
                     self.set_widget_visible(ctx, next);
                 }
-                TrayAction::ShowAnalytics => self.panel_open = true,
+                TrayAction::ShowAnalytics => self.open_panel(),
                 TrayAction::ToggleAutostart => {
                     let now = self.engine.settings.lock().unwrap().autostart;
                     self.set_autostart(!now);
@@ -179,9 +186,14 @@ impl SundialApp {
             .with_transparent(true)
             .with_always_on_top()
             .with_resizable(false)
-            .with_taskbar(false);
+            .with_taskbar(false)
+            // Ask for focus, so the panel can take it and the focus-loss
+            // dismissal below becomes meaningful rather than instant.
+            .with_active(true);
 
-        let mut dismiss = false;
+        let mut escaped = false;
+        let mut closed = false;
+        let mut focused_now = false;
 
         ctx.show_viewport_immediate(
             egui::ViewportId::from_hash_of("analytics"),
@@ -197,16 +209,19 @@ impl SundialApp {
                         analytics::show(ui, &snap.summary, snap.state, today_index);
                     });
 
-                let escaped = ctx.input(|i| i.key_pressed(egui::Key::Escape));
-                let closed = ctx.input(|i| i.viewport().close_requested());
-                let lost_focus = !ctx.input(|i| i.viewport().focused.unwrap_or(true));
-                if escaped || closed || lost_focus {
-                    dismiss = true;
-                }
+                escaped = ctx.input(|i| i.key_pressed(egui::Key::Escape));
+                closed = ctx.input(|i| i.viewport().close_requested());
+                focused_now = ctx.input(|i| i.viewport().focused.unwrap_or(false));
             },
         );
 
-        if dismiss {
+        if focused_now {
+            self.panel_focused_once = true;
+        }
+
+        // Only honour focus loss once the panel has actually held focus.
+        let lost_focus = self.panel_focused_once && !focused_now;
+        if escaped || closed || lost_focus {
             self.close_panel();
         }
     }
