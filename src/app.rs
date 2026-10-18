@@ -5,6 +5,14 @@ use chrono::Datelike;
 use egui::ViewportCommand;
 use std::time::{Duration, Instant};
 
+fn window_hwnd(cc: &eframe::CreationContext<'_>) -> Option<isize> {
+    use raw_window_handle::{HasWindowHandle, RawWindowHandle};
+    match cc.window_handle().ok()?.as_raw() {
+        RawWindowHandle::Win32(h) => Some(h.hwnd.get()),
+        _ => None,
+    }
+}
+
 /// Clicking the widget while the panel is focused fires both "panel lost focus"
 /// and "widget clicked", which would close and immediately reopen it. Ignore a
 /// toggle for this long after the panel closes.
@@ -17,6 +25,8 @@ pub struct SundialApp {
     closed_at: Option<Instant>,
     widget_visible: bool,
     last_pos: Option<egui::Pos2>,
+    /// The widget's native window, needed to pop a Win32 context menu.
+    hwnd: Option<isize>,
 }
 
 impl SundialApp {
@@ -33,6 +43,11 @@ impl SundialApp {
         // context, so it keeps working while the widget is hidden.
         let tray = Tray::new(autostart, cc.egui_ctx.clone());
 
+        let hwnd = window_hwnd(cc);
+        if hwnd.is_none() {
+            eprintln!("sundial: no Win32 window handle; the widget's right-click menu is unavailable");
+        }
+
         Self {
             engine,
             tray,
@@ -40,6 +55,7 @@ impl SundialApp {
             closed_at: None,
             widget_visible,
             last_pos: None,
+            hwnd,
         }
     }
 
@@ -116,12 +132,11 @@ impl eframe::App for SundialApp {
                     ctx.send_viewport_cmd(ViewportCommand::StartDrag)
                 }
                 widget::WidgetAction::TogglePanel => self.toggle_panel(),
-                widget::WidgetAction::Hide => self.set_widget_visible(ctx, false),
-                widget::WidgetAction::ToggleAutostart => {
-                    let now = self.engine.settings.lock().unwrap().autostart;
-                    self.set_autostart(!now);
+                widget::WidgetAction::ShowMenu => {
+                    if let (Some(tray), Some(hwnd)) = (&self.tray, self.hwnd) {
+                        tray.show_context_menu(hwnd);
+                    }
                 }
-                widget::WidgetAction::Quit => self.quit(ctx),
                 widget::WidgetAction::None => {}
             });
 

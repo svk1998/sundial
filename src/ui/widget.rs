@@ -10,9 +10,7 @@ pub enum WidgetAction {
     None,
     TogglePanel,
     StartDrag,
-    Hide,
-    ToggleAutostart,
-    Quit,
+    ShowMenu,
 }
 
 /// Green while counting, amber while idle, grey while locked. With idle-pause in
@@ -44,38 +42,20 @@ pub fn show(ui: &mut egui::Ui, snap: &Snapshot) -> WidgetAction {
 
     let response = ui.interact(rect, ui.id().with("widget"), Sense::click_and_drag());
 
-    let mut action = WidgetAction::None;
     // Primary button only. egui senses drags from any button, so reacting to a
     // plain `drag_started()` would start an OS drag loop on right-press and
-    // swallow the context menu below before it could open.
+    // swallow the menu.
     //
     // egui's built-in drag threshold separates a click from a drag, so a small
     // wobble while clicking still opens the panel rather than moving the widget.
     if response.drag_started_by(egui::PointerButton::Primary) {
-        action = WidgetAction::StartDrag;
+        WidgetAction::StartDrag
     } else if response.clicked() {
-        action = WidgetAction::TogglePanel;
+        WidgetAction::TogglePanel
+    } else if response.secondary_clicked() {
+        // Handled by the caller as a native popup - see Tray::show_context_menu.
+        WidgetAction::ShowMenu
+    } else {
+        WidgetAction::None
     }
-
-    response.context_menu(|ui| {
-        if ui.button("Hide").clicked() {
-            action = WidgetAction::Hide;
-            ui.close_menu();
-        }
-        if ui.button("Analytics").clicked() {
-            action = WidgetAction::TogglePanel;
-            ui.close_menu();
-        }
-        if ui.button("Start with Windows").clicked() {
-            action = WidgetAction::ToggleAutostart;
-            ui.close_menu();
-        }
-        ui.separator();
-        if ui.button("Quit").clicked() {
-            action = WidgetAction::Quit;
-            ui.close_menu();
-        }
-    });
-
-    action
 }

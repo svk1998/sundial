@@ -13,6 +13,7 @@ tray-icon = "0.19"
 winreg = "0.52"
 dirs = "5"
 image = { version = "0.25", default-features = false, features = ["png"] }
+raw-window-handle = "0.6"
 
 [dependencies.windows]
 version = "0.58"

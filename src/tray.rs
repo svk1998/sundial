@@ -17,6 +17,7 @@ pub enum TrayAction {
 /// present for the whole life of the process.
 pub struct Tray {
     _icon: TrayIcon,
+    menu: Menu,
     pending: Arc<Mutex<Vec<TrayAction>>>,
     pub autostart_item: CheckMenuItem,
 }
@@ -51,7 +52,7 @@ impl Tray {
         menu.append(&quit).ok()?;
 
         let icon = match TrayIconBuilder::new()
-            .with_menu(Box::new(menu))
+            .with_menu(Box::new(menu.clone()))
             .with_tooltip("Sundial")
             .with_icon(load_icon()?)
             .build()
@@ -75,6 +76,7 @@ impl Tray {
 
         Some(Tray {
             _icon: icon,
+            menu,
             pending,
             autostart_item,
         })
@@ -83,6 +85,20 @@ impl Tray {
     /// Takes everything the pump has queued since the last call.
     pub fn take_actions(&self) -> Vec<TrayAction> {
         std::mem::take(&mut *self.pending.lock().unwrap())
+    }
+
+    /// Pops the same menu as a native Win32 context menu at the cursor.
+    ///
+    /// The widget cannot use an egui context menu: egui draws menus inside the
+    /// window that owns them, and the widget's window is 140x40 px, so the menu
+    /// would be clipped to nothing. A native popup is not bounded by the window.
+    /// Selections arrive through the same global `MenuEvent` channel the tray
+    /// pump already drains, so there is one menu definition and one handler.
+    pub fn show_context_menu(&self, hwnd: isize) {
+        use tray_icon::menu::ContextMenu;
+        unsafe {
+            self.menu.show_context_menu_for_hwnd(hwnd, None);
+        }
     }
 }
 
