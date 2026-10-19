@@ -75,7 +75,8 @@ impl Store {
                 return Store::default();
             }
         };
-        match serde_json::from_str::<Dto>(&text) {
+        // serde_json rejects a UTF-8 byte-order mark, which some editors add.
+        match serde_json::from_str::<Dto>(text.strip_prefix('\u{feff}').unwrap_or(&text)) {
             Ok(dto) => Store {
                 days: dto
                     .days
@@ -159,6 +160,24 @@ mod tests {
         );
         assert!(!loaded.settings.widget_visible);
         assert_eq!(loaded.widget.unwrap().x, 100.0);
+    }
+
+    /// Older Notepad and PowerShell 5.1 prefix UTF-8 with a byte-order mark, and
+    /// the README invites hand-editing this file.
+    #[test]
+    fn hand_edited_file_with_utf8_bom_loads() {
+        let dir = tempdir();
+        let path = dir.join("data.json");
+        std::fs::write(
+            &path,
+            "\u{feff}{\"version\":1,\"days\":{\"2026-10-18\":60},\"settings\":{\"idle_timeout_secs\":120}}",
+        )
+        .unwrap();
+
+        let s = Store::load(&path);
+        assert_eq!(s.days.get(&d(2026, 10, 18)), Some(&Duration::from_secs(60)));
+        assert_eq!(s.settings.idle_timeout_secs, 120);
+        assert_eq!(files_containing(&dir, "corrupt"), 0);
     }
 
     #[test]
