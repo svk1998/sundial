@@ -36,3 +36,6 @@ lto = true
 codegen-units = 1
 panic = "abort"
 strip = true
+
+[build-dependencies]
+winresource = "0.1.34"
