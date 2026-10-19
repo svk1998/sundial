@@ -53,7 +53,9 @@ Root: HKCU; Subkey: "Software\Microsoft\Windows\CurrentVersion\Run"; ValueType: 
   ValueName: "Sundial"; ValueData: """{app}\sundial.exe"""; Tasks: autostart
 
 [Run]
-Filename: "{app}\sundial.exe"; Description: "Launch Sundial"; Flags: nowait postinstall
+; skipifsilent: a silent install (winget, scripted deploys) must exit without leaving
+; the app running, or anything waiting on the installer's process tree never returns.
+Filename: "{app}\sundial.exe"; Description: "Launch Sundial"; Flags: nowait postinstall skipifsilent
 
 [Code]
 // Stops a running Sundial so its exe can be replaced or removed. Asks it to close
