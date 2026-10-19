@@ -13,6 +13,8 @@ jobs:
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0 # full history and tags, for the "What's new" commit list
 
       # rust-toolchain.toml pins stable + the MSVC target; rustup picks it up on first cargo call.
       - name: Show toolchain
@@ -75,7 +77,17 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          gh release create "${{ github.ref_name }}" dist/* `
-            --title "${{ github.ref_name }}" `
+          $tag = "${{ github.ref_name }}"
+          $prev = git describe --tags --abbrev=0 "$tag^" 2>$null
+          $range = if ($prev) { "$prev..$tag" } else { $tag }
+          $changes = git log $range --no-merges --format="- %s" |
+            Where-Object { $_ -notmatch "^- chore: bump version" }
+          if (-not $changes) { $changes = "- Maintenance release." }
+          $notes = (Get-Content .github/release-notes.md -Raw).Replace("{{TAG}}", $tag)
+          $notes.Replace("{{CHANGES}}", ($changes -join "`n")) | Out-File -Encoding utf8 "$env:RUNNER_TEMP/notes.md"
+          # --generate-notes appends GitHub's "Full Changelog" link after our notes.
+          gh release create $tag dist/* `
+            --title $tag `
+            --notes-file "$env:RUNNER_TEMP/notes.md" `
             --generate-notes `
             --verify-tag
