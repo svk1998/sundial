@@ -1,0 +1,283 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Sundial: time at your PC, honestly counted</title>
+  <meta name="description" content="Sundial is a tiny, free Windows app that tracks how long you're actually at your PC each day. Local-only, no account, no network.">
+  <meta property="og:title" content="Sundial">
+  <meta property="og:description" content="Tracks how long you're actually at your Windows PC each day.">
+  <meta property="og:image" content="https://svk1998.github.io/sundial/screenshots/analytics.png">
+  <link rel="icon" type="image/png" href="icon.png">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Ubuntu:wght@300;400;500&family=Ubuntu+Mono&display=swap" rel="stylesheet">
+  <style>
+    /* Colours are the app's own (src/ui/theme.rs). */
+    :root {
+      --canvas: #111214;
+      --panel: #1a1c1f;
+      --panel-edge: #26292d;
+      --text: #e8eaed;
+      --muted: #9aa0a6;
+      --green: #4ade80;
+      --amber: #fbbf24;
+      --grey: #6b7280;
+      --radius: 10px;
+      --max: 1040px;
+    }
+    * { box-sizing: border-box; }
+    html { scroll-behavior: smooth; }
+    body {
+      margin: 0;
+      background: var(--canvas);
+      color: var(--text);
+      font: 300 17px/1.6 "Ubuntu", system-ui, -apple-system, "Segoe UI", sans-serif;
+      -webkit-font-smoothing: antialiased;
+    }
+    a { color: var(--green); text-decoration: none; }
+    a:hover { text-decoration: underline; }
+    code, .mono { font-family: "Ubuntu Mono", ui-monospace, Consolas, monospace; }
+    code { background: var(--panel); border: 1px solid var(--panel-edge); border-radius: 6px; padding: 1px 6px; font-size: .92em; overflow-wrap: anywhere; }
+    /* Grid items default to min-width: auto, so a long path would widen the page on phones. */
+    .hero > *, .grid > *, .states > *, .two > * { min-width: 0; }
+    .wrap { max-width: var(--max); margin: 0 auto; padding: 0 20px; }
+    h1, h2, h3 { font-weight: 400; line-height: 1.2; margin: 0; }
+    h2 { font-size: 30px; margin-bottom: 12px; }
+    .eyebrow { font-size: 12px; letter-spacing: .14em; text-transform: uppercase; color: var(--muted); margin-bottom: 10px; }
+    .lead { color: var(--muted); font-size: 19px; }
+    section { padding: 72px 0; border-top: 1px solid var(--panel-edge); }
+
+    /* Header */
+    header { padding: 18px 0; }
+    header .wrap { display: flex; align-items: center; justify-content: space-between; }
+    .brand { display: flex; align-items: center; gap: 10px; color: var(--text); font-weight: 400; font-size: 18px; }
+    .brand img { width: 28px; height: 28px; }
+    .brand:hover { text-decoration: none; }
+    nav a { color: var(--muted); margin-left: 22px; font-size: 15px; }
+    nav a:hover { color: var(--text); text-decoration: none; }
+
+    /* Hero */
+    .hero { padding-top: 64px; padding-bottom: 80px; display: grid; grid-template-columns: 1.05fr 1fr; gap: 56px; align-items: center; }
+    .hero h1 { font-size: 52px; font-weight: 300; letter-spacing: -.01em; margin-bottom: 18px; }
+    .hero h1 em { font-style: normal; color: var(--green); }
+    .cta { display: flex; flex-wrap: wrap; gap: 12px; margin: 30px 0 14px; }
+    .btn { display: inline-flex; align-items: center; gap: 10px; padding: 13px 22px; border-radius: var(--radius); font-weight: 500; font-size: 16px; }
+    .btn:hover { text-decoration: none; }
+    .btn-primary { background: var(--green); color: #0b2814; }
+    .btn-primary:hover { filter: brightness(1.08); }
+    .btn-ghost { border: 1px solid var(--panel-edge); color: var(--text); background: var(--panel); }
+    .btn-ghost:hover { border-color: var(--grey); }
+    .meta { color: var(--muted); font-size: 14px; }
+
+    /* Live replica of the widget, at 2x */
+    .stage { position: relative; display: flex; flex-direction: column; align-items: center; gap: 26px; }
+    .widget {
+      width: 280px; height: 80px; border-radius: 20px;
+      background: rgba(26, 28, 31, .87);
+      border: 1px solid var(--panel-edge);
+      box-shadow: 0 18px 50px rgba(0, 0, 0, .45);
+      display: flex; align-items: center; gap: 22px; padding-left: 28px;
+    }
+    .dot { width: 14px; height: 14px; border-radius: 50%; background: var(--green); flex: none; }
+    .dot.idle { background: var(--amber); }
+    .dot.locked { background: var(--grey); }
+    .widget .clock { font-size: 34px; letter-spacing: .02em; color: var(--text); }
+    .panel-shot { border-radius: var(--radius); box-shadow: 0 24px 60px rgba(0, 0, 0, .5); border: 1px solid var(--panel-edge); max-width: 100%; height: auto; }
+    .caption { color: var(--muted); font-size: 13px; margin-top: -14px; }
+
+    /* Cards */
+    .grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 18px; margin-top: 34px; }
+    .card { background: var(--panel); border: 1px solid var(--panel-edge); border-radius: var(--radius); padding: 22px; }
+    .card h3 { font-size: 18px; margin-bottom: 6px; }
+    .card p { margin: 0; color: var(--muted); font-size: 15px; }
+
+    /* States */
+    .states { display: grid; grid-template-columns: repeat(3, 1fr); gap: 18px; margin-top: 30px; }
+    .state { display: flex; gap: 14px; align-items: flex-start; }
+    .state .dot { margin-top: 7px; width: 11px; height: 11px; }
+    .state b { font-weight: 500; display: block; }
+    .state span { color: var(--muted); font-size: 15px; }
+    .note { margin-top: 30px; background: var(--panel); border-left: 3px solid var(--green); border-radius: 0 var(--radius) var(--radius) 0; padding: 16px 20px; color: var(--muted); font-size: 15px; }
+
+    /* Steps */
+    .two { display: grid; grid-template-columns: 1fr 1fr; gap: 40px; margin-top: 30px; }
+    ol.steps { list-style: none; counter-reset: s; padding: 0; margin: 0; }
+    ol.steps li { counter-increment: s; position: relative; padding-left: 44px; margin-bottom: 18px; }
+    ol.steps li::before {
+      content: counter(s); position: absolute; left: 0; top: 0;
+      width: 28px; height: 28px; border-radius: 50%; background: var(--panel); border: 1px solid var(--panel-edge);
+      display: grid; place-items: center; font-size: 14px; color: var(--green);
+    }
+    .muted { color: var(--muted); }
+    h3.sub { font-size: 20px; margin-bottom: 14px; }
+    ul.plain { padding-left: 20px; margin: 0; color: var(--muted); }
+    ul.plain li { margin-bottom: 8px; }
+    ul.plain b { color: var(--text); font-weight: 400; }
+
+    footer { border-top: 1px solid var(--panel-edge); padding: 30px 0 46px; color: var(--muted); font-size: 14px; }
+    footer .wrap { display: flex; justify-content: space-between; flex-wrap: wrap; gap: 12px; }
+
+    @media (max-width: 860px) {
+      .hero { grid-template-columns: 1fr; gap: 44px; padding-top: 36px; }
+      .hero h1 { font-size: 40px; }
+      .grid, .states, .two { grid-template-columns: 1fr; }
+      nav a:not(.gh) { display: none; }
+      section { padding: 56px 0; }
+    }
+    @media (max-width: 380px) {
+      .widget { width: 240px; height: 70px; gap: 18px; padding-left: 24px; }
+      .widget .clock { font-size: 29px; }
+    }
+    @media (prefers-reduced-motion: reduce) { html { scroll-behavior: auto; } }
+  </style>
+</head>
+<body>
+  <header>
+    <div class="wrap">
+      <a class="brand" href="#"><img src="icon.png" alt="" width="28" height="28">Sundial</a>
+      <nav>
+        <a href="#how">How it counts</a>
+        <a href="#install">Install</a>
+        <a href="#privacy">Privacy</a>
+        <a class="gh" href="https://github.com/svk1998/sundial">GitHub</a>
+      </nav>
+    </div>
+  </header>
+
+  <main>
+    <div class="wrap hero">
+      <div>
+        <h1>Know how long you're <em>actually</em> at your PC.</h1>
+        <p class="lead">Sundial is a tiny Windows app that counts your real time at the keyboard each day, and pauses the moment you lock, sleep, or walk away.</p>
+        <div class="cta">
+          <a class="btn btn-primary" id="download" href="https://github.com/svk1998/sundial/releases/latest">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3v12m0 0 5-5m-5 5-5-5M4 21h16"/></svg>
+            Download for Windows
+          </a>
+          <a class="btn btn-ghost" href="https://github.com/svk1998/sundial">View source</a>
+        </div>
+        <p class="meta" id="meta">Free and open source · Windows 10 &amp; 11 · No admin rights needed</p>
+      </div>
+
+      <div class="stage">
+        <div class="widget" role="img" aria-label="The Sundial widget showing today's time">
+          <span class="dot"></span><span class="clock mono" id="clock">01:57:40</span>
+        </div>
+        <img class="panel-shot" src="screenshots/analytics.png" width="320" height="290"
+             alt="Sundial analytics panel: today's total, yesterday, this week, daily average, a 7-day chart, and history">
+        <p class="caption">Click the widget for today, this week, and your history.</p>
+      </div>
+    </div>
+
+    <section>
+      <div class="wrap">
+        <div class="eyebrow">Features</div>
+        <h2>Small, quiet, and honest.</h2>
+        <div class="grid">
+          <div class="card"><h3>Floating widget</h3><p>Today's total, always in view. Drag it anywhere; it remembers where you left it, on any monitor.</p></div>
+          <div class="card"><h3>At-a-glance analytics</h3><p>Yesterday, this week, a 30-day daily average, a 7-day chart, and your full history.</p></div>
+          <div class="card"><h3>Lives in the tray</h3><p>Hide the widget and Sundial keeps counting. The tray icon brings it back. It can start with Windows.</p></div>
+          <div class="card"><h3>Local only</h3><p>No account, no cloud, no telemetry. One small JSON file on your machine.</p></div>
+          <div class="card"><h3>Lightweight</h3><p>A native Rust app of about 3 MB that checks presence once a second and otherwise stays out of the way.</p></div>
+          <div class="card"><h3>Free and open source</h3><p>MIT-licensed. Read the code, build it yourself, or send a pull request.</p></div>
+        </div>
+      </div>
+    </section>
+
+    <section id="how">
+      <div class="wrap">
+        <div class="eyebrow">How it counts</div>
+        <h2>Time counts only when you're there.</h2>
+        <p class="lead">Your session must be unlocked and you must have used the keyboard or mouse in the last 5 minutes. The dot tells you which state you're in.</p>
+        <div class="states">
+          <div class="state"><span class="dot"></span><div><b>Counting</b><span>You're active and the clock is running.</span></div></div>
+          <div class="state"><span class="dot idle"></span><div><b>Idle</b><span>No input for 5 minutes, so the clock pauses until you're back.</span></div></div>
+          <div class="state"><span class="dot locked"></span><div><b>Locked</b><span>Locked, asleep, or signed out. Nothing counts.</span></div></div>
+        </div>
+        <p class="note">The 5-minute grace window is deliberate: it keeps the timer running while you read. So the total can exceed your true presence by at most one idle timeout per absence. Sleep, crashes, and clock changes can never inflate it, and totals split cleanly at midnight.</p>
+      </div>
+    </section>
+
+    <section id="install">
+      <div class="wrap">
+        <div class="eyebrow">Install</div>
+        <h2>Up and running in a minute.</h2>
+        <div class="two">
+          <div>
+            <h3 class="sub">Install</h3>
+            <ol class="steps">
+              <li>Download <code id="setup-name">sundial-setup.exe</code> from the <a href="https://github.com/svk1998/sundial/releases/latest">latest release</a>.</li>
+              <li>Run it. No admin rights needed: it installs for your user only and can start with Windows.</li>
+              <li>If SmartScreen says <i>"Windows protected your PC"</i>, choose <b>More info → Run anyway</b>. That's because Sundial isn't code-signed yet (see below).</li>
+            </ol>
+            <p class="muted">Prefer no installer? Each release also includes a portable <code>.exe</code>.</p>
+          </div>
+          <div>
+            <h3 class="sub">Update or remove</h3>
+            <ul class="plain">
+              <li><b>Update:</b> run the newer setup. It closes Sundial, upgrades in place, and keeps your history.</li>
+              <li><b>Uninstall:</b> <i>Settings → Apps → Sundial</i>. It closes the app, removes autostart, and asks whether to delete your history.</li>
+              <li><b>Your data:</b> <code>%APPDATA%\Sundial\data.json</code>. Edit <code>idle_timeout_secs</code> there to change the 5-minute threshold.</li>
+            </ul>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <section id="privacy">
+      <div class="wrap two" style="margin-top:0">
+        <div>
+          <div class="eyebrow">Privacy</div>
+          <h2>Nothing leaves your PC.</h2>
+          <p class="muted">Sundial makes no network connections of any kind. It records only how many seconds you were present each day, in a file on your own machine. It doesn't capture keystrokes, screens, window titles, or app usage, and it has no analytics or telemetry.</p>
+        </div>
+        <div id="code-signing">
+          <div class="eyebrow">Code signing policy</div>
+          <h2>Built in the open.</h2>
+          <ul class="plain">
+            <li>Every release is built automatically by <a href="https://github.com/svk1998/sundial/actions/workflows/release.yml">GitHub Actions</a> from a tagged commit in this repository, with no manual build steps.</li>
+            <li>Sundial is applying to <a href="https://signpath.org">SignPath Foundation</a> for free code signing for open-source projects. Until then, releases are unsigned; each release publishes SHA-256 checksums.</li>
+            <li><b>Team:</b> <a href="https://github.com/svk1998">svk1998</a> is the author, reviewer, and release approver.</li>
+          </ul>
+        </div>
+      </div>
+    </section>
+  </main>
+
+  <footer>
+    <div class="wrap">
+      <span>Sundial is free software under the <a href="https://github.com/svk1998/sundial/blob/main/LICENSE">MIT license</a>.</span>
+      <span><a href="https://github.com/svk1998/sundial">GitHub</a> · <a href="https://github.com/svk1998/sundial/releases">Releases</a> · <a href="https://github.com/svk1998/sundial/issues">Issues</a></span>
+    </div>
+  </footer>
+
+  <script>
+    // The widget replica ticks like the real one.
+    (function () {
+      var el = document.getElementById("clock");
+      var start = 1 * 3600 + 57 * 60 + 40, t0 = Date.now();
+      function pad(n) { return String(n).padStart(2, "0"); }
+      setInterval(function () {
+        var s = start + Math.floor((Date.now() - t0) / 1000);
+        el.textContent = pad(Math.floor(s / 3600)) + ":" + pad(Math.floor(s % 3600 / 60)) + ":" + pad(s % 60);
+      }, 500);
+    })();
+
+    // Point the download button straight at the latest installer. The static link
+    // to the releases page stays as the fallback if the API is unreachable.
+    fetch("https://api.github.com/repos/svk1998/sundial/releases/latest")
+      .then(function (r) { return r.ok ? r.json() : Promise.reject(r.status); })
+      .then(function (rel) {
+        var setup = (rel.assets || []).find(function (a) { return /-setup\.exe$/.test(a.name); });
+        if (!setup) return;
+        document.getElementById("download").href = setup.browser_download_url;
+        document.getElementById("setup-name").textContent = setup.name;
+        var mb = (setup.size / 1048576).toFixed(1);
+        document.getElementById("meta").textContent =
+          rel.tag_name + " · " + mb + " MB · Windows 10 & 11 · Free and open source · No admin rights needed";
+      })
+      .catch(function () {});
+  </script>
+</body>
+</html>

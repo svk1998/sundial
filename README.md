@@ -6,6 +6,8 @@
 
 **Tracks how long you're actually at your Windows PC each day.**
 
+[Website](https://svk1998.github.io/sundial/) · [Download](https://github.com/svk1998/sundial/releases/latest)
+
 [![Release](https://img.shields.io/github/v/release/svk1998/sundial)](https://github.com/svk1998/sundial/releases/latest)
 [![Build](https://img.shields.io/github/actions/workflow/status/svk1998/sundial/release.yml?label=build)](https://github.com/svk1998/sundial/actions/workflows/release.yml)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue)](LICENSE)
