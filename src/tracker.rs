@@ -168,9 +168,13 @@ mod tests {
     fn wall(h: u32, m: u32, s: u32) -> DateTime<Local> {
         Local.with_ymd_and_hms(2026, 10, 18, h, m, s).unwrap()
     }
-    fn day() -> NaiveDate { NaiveDate::from_ymd_opt(2026, 10, 18).unwrap() }
+    fn day() -> NaiveDate {
+        NaiveDate::from_ymd_opt(2026, 10, 18).unwrap()
+    }
 
-    fn active() -> Duration { Duration::ZERO }
+    fn active() -> Duration {
+        Duration::ZERO
+    }
 
     #[test]
     fn first_tick_credits_nothing() {
@@ -193,16 +197,28 @@ mod tests {
         let mut t = Tracker::new(IDLE);
         t.tick(Duration::from_secs(0), wall(9, 0, 0), active());
         // this tick observes 301s of idleness -> present becomes false
-        t.tick(Duration::from_secs(1), wall(9, 0, 1), Duration::from_secs(301));
+        t.tick(
+            Duration::from_secs(1),
+            wall(9, 0, 1),
+            Duration::from_secs(301),
+        );
         assert_eq!(t.state(), DerivedState::IdlePaused);
-        let c = t.tick(Duration::from_secs(2), wall(9, 0, 2), Duration::from_secs(302));
+        let c = t.tick(
+            Duration::from_secs(2),
+            wall(9, 0, 2),
+            Duration::from_secs(302),
+        );
         assert!(c.is_empty(), "no time accrues while idle");
     }
 
     #[test]
     fn input_after_idle_resumes_counting() {
         let mut t = Tracker::new(IDLE);
-        t.tick(Duration::from_secs(0), wall(9, 0, 0), Duration::from_secs(301));
+        t.tick(
+            Duration::from_secs(0),
+            wall(9, 0, 0),
+            Duration::from_secs(301),
+        );
         assert_eq!(t.state(), DerivedState::IdlePaused);
         t.tick(Duration::from_secs(1), wall(9, 0, 1), active());
         assert_eq!(t.state(), DerivedState::Counting);
@@ -249,7 +265,11 @@ mod tests {
         let mut t = Tracker::new(IDLE);
         t.tick(Duration::from_secs(0), wall(9, 0, 0), active());
         t.resume();
-        assert_eq!(t.state(), DerivedState::IdlePaused, "resume assumes absence until input");
+        assert_eq!(
+            t.state(),
+            DerivedState::IdlePaused,
+            "resume assumes absence until input"
+        );
         let c = t.tick(Duration::from_secs(3600), wall(10, 0, 0), active());
         assert!(c.is_empty());
     }
@@ -263,11 +283,27 @@ mod tests {
         let c = t.tick(Duration::from_secs(4), after, active());
 
         assert_eq!(c.len(), 2, "should split: {c:?}");
-        assert_eq!(c[0], (NaiveDate::from_ymd_opt(2026, 10, 18).unwrap(), Duration::from_secs(2)));
-        assert_eq!(c[1], (NaiveDate::from_ymd_opt(2026, 10, 19).unwrap(), Duration::from_secs(2)));
+        assert_eq!(
+            c[0],
+            (
+                NaiveDate::from_ymd_opt(2026, 10, 18).unwrap(),
+                Duration::from_secs(2)
+            )
+        );
+        assert_eq!(
+            c[1],
+            (
+                NaiveDate::from_ymd_opt(2026, 10, 19).unwrap(),
+                Duration::from_secs(2)
+            )
+        );
 
         let total: Duration = c.iter().map(|(_, d)| *d).sum();
-        assert_eq!(total, Duration::from_secs(4), "split must conserve total time");
+        assert_eq!(
+            total,
+            Duration::from_secs(4),
+            "split must conserve total time"
+        );
     }
 
     #[test]
@@ -277,6 +313,12 @@ mod tests {
         let at = Local.with_ymd_and_hms(2026, 10, 19, 0, 0, 0).unwrap();
         t.tick(Duration::from_secs(0), before, active());
         let c = t.tick(Duration::from_secs(1), at, active());
-        assert_eq!(c, vec![(NaiveDate::from_ymd_opt(2026, 10, 18).unwrap(), Duration::from_secs(1))]);
+        assert_eq!(
+            c,
+            vec![(
+                NaiveDate::from_ymd_opt(2026, 10, 18).unwrap(),
+                Duration::from_secs(1)
+            )]
+        );
     }
 }

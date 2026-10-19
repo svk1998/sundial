@@ -5,16 +5,27 @@ use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
+/// Missing fields fall back to their defaults, so a file from another version
+/// loads instead of being quarantined.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
 pub struct Settings {
     pub idle_timeout_secs: u64,
-    pub autostart: bool,
     pub widget_visible: bool,
+    /// Never read: autostart lives in the registry. Still written because
+    /// v0.1.2 and earlier require the field and would quarantine a file
+    /// without it.
+    #[serde(rename = "autostart")]
+    legacy_autostart: bool,
 }
 
 impl Default for Settings {
     fn default() -> Self {
-        Self { idle_timeout_secs: 300, autostart: false, widget_visible: true }
+        Self {
+            idle_timeout_secs: 300,
+            widget_visible: true,
+            legacy_autostart: false,
+        }
     }
 }
 
@@ -70,7 +81,9 @@ impl Store {
                     .days
                     .into_iter()
                     .filter_map(|(k, v)| {
-                        NaiveDate::parse_from_str(&k, DATE_FMT).ok().map(|d| (d, Duration::from_secs(v)))
+                        NaiveDate::parse_from_str(&k, DATE_FMT)
+                            .ok()
+                            .map(|d| (d, Duration::from_secs(v)))
                     })
                     .collect(),
                 settings: dto.settings,
@@ -135,14 +148,65 @@ mod tests {
         let path = dir.join("data.json");
         let mut s = Store::default();
         s.add(d(2026, 10, 18), Duration::from_secs(4212));
-        s.settings.autostart = true;
+        s.settings.widget_visible = false;
         s.widget = Some(WidgetPos { x: 100.0, y: 200.0 });
         s.save(&path).unwrap();
 
         let loaded = Store::load(&path);
-        assert_eq!(loaded.days.get(&d(2026, 10, 18)), Some(&Duration::from_secs(4212)));
-        assert!(loaded.settings.autostart);
+        assert_eq!(
+            loaded.days.get(&d(2026, 10, 18)),
+            Some(&Duration::from_secs(4212))
+        );
+        assert!(!loaded.settings.widget_visible);
         assert_eq!(loaded.widget.unwrap().x, 100.0);
+    }
+
+    #[test]
+    fn loads_files_written_by_older_versions() {
+        let dir = tempdir();
+        let path = dir.join("data.json");
+        std::fs::write(
+            &path,
+            br#"{"version":1,"days":{"2026-10-18":60},
+                "settings":{"idle_timeout_secs":300,"autostart":true,"widget_visible":false}}"#,
+        )
+        .unwrap();
+
+        let s = Store::load(&path);
+        assert_eq!(s.days.get(&d(2026, 10, 18)), Some(&Duration::from_secs(60)));
+        assert!(!s.settings.widget_visible);
+        assert_eq!(files_containing(&dir, "corrupt"), 0);
+    }
+
+    /// v0.1.2 and earlier deserialize every settings field as required; a file
+    /// they can't parse is quarantined, which would hide the user's history.
+    #[test]
+    fn saved_files_keep_every_field_older_versions_require() {
+        let dir = tempdir();
+        let path = dir.join("data.json");
+        Store::default().save(&path).unwrap();
+
+        let v: serde_json::Value =
+            serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
+        for field in ["idle_timeout_secs", "autostart", "widget_visible"] {
+            assert!(!v["settings"][field].is_null(), "settings.{field} missing");
+        }
+    }
+
+    #[test]
+    fn missing_settings_fields_use_defaults() {
+        let dir = tempdir();
+        let path = dir.join("data.json");
+        std::fs::write(
+            &path,
+            br#"{"version":1,"days":{},"settings":{"widget_visible":false}}"#,
+        )
+        .unwrap();
+
+        let s = Store::load(&path);
+        assert_eq!(s.settings.idle_timeout_secs, 300);
+        assert!(!s.settings.widget_visible);
+        assert_eq!(files_containing(&dir, "corrupt"), 0);
     }
 
     #[test]
@@ -172,12 +236,11 @@ mod tests {
         let s = Store::load(&path);
         assert!(s.days.is_empty());
 
-        let quarantined: Vec<_> = std::fs::read_dir(&dir)
-            .unwrap()
-            .filter_map(|e| e.ok())
-            .filter(|e| e.file_name().to_string_lossy().contains("corrupt"))
-            .collect();
-        assert_eq!(quarantined.len(), 1, "corrupt file should be renamed aside");
+        assert_eq!(
+            files_containing(&dir, "corrupt"),
+            1,
+            "corrupt file should be renamed aside"
+        );
     }
 
     #[test]
@@ -189,12 +252,11 @@ mod tests {
         let s = Store::load(&path);
         assert!(s.days.is_empty());
 
-        let quarantined: Vec<_> = std::fs::read_dir(&dir)
-            .unwrap()
-            .filter_map(|e| e.ok())
-            .filter(|e| e.file_name().to_string_lossy().contains("corrupt"))
-            .collect();
-        assert_eq!(quarantined.len(), 1, "unreadable (non-UTF-8) file should be renamed aside");
+        assert_eq!(
+            files_containing(&dir, "corrupt"),
+            1,
+            "unreadable (non-UTF-8) file should be renamed aside"
+        );
     }
 
     #[test]
@@ -202,18 +264,26 @@ mod tests {
         let dir = tempdir();
         let path = dir.join("data.json");
         Store::default().save(&path).unwrap();
-        let leftovers: Vec<_> = std::fs::read_dir(&dir)
+        assert_eq!(files_containing(&dir, ".tmp"), 0);
+    }
+
+    fn files_containing(dir: &Path, needle: &str) -> usize {
+        std::fs::read_dir(dir)
             .unwrap()
             .filter_map(|e| e.ok())
-            .filter(|e| e.file_name().to_string_lossy().ends_with(".tmp"))
-            .collect();
-        assert!(leftovers.is_empty());
+            .filter(|e| e.file_name().to_string_lossy().contains(needle))
+            .count()
     }
 
     fn tempdir() -> std::path::PathBuf {
         let mut p = std::env::temp_dir();
-        p.push(format!("sundial-test-{}", std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos()));
+        p.push(format!(
+            "sundial-test-{}",
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
         std::fs::create_dir_all(&p).unwrap();
         p
     }

@@ -14,12 +14,12 @@ fn window_hwnd(cc: &eframe::CreationContext<'_>) -> Option<isize> {
     }
 }
 
-/// Clicking the widget while the panel is focused fires both "panel lost focus"
-/// and "widget clicked", which would close and immediately reopen it. Ignore a
-/// toggle for this long after the panel closes.
 /// Title of the analytics viewport, used to find its native window.
 const PANEL_TITLE: &str = "Sundial Analytics";
 
+/// Clicking the widget while the panel is focused fires both "panel lost focus"
+/// and "widget clicked", which would close and immediately reopen it. Ignore a
+/// toggle for this long after the panel closes.
 const REOPEN_GUARD: Duration = Duration::from_millis(150);
 
 pub struct SundialApp {
@@ -28,6 +28,7 @@ pub struct SundialApp {
     panel_open: bool,
     closed_at: Option<Instant>,
     widget_visible: bool,
+    autostart: bool,
     /// The panel closes on focus loss, but it does not hold focus on the frame
     /// it is created - the widget still does. Without this latch it would
     /// dismiss itself immediately and could never be seen.
@@ -41,10 +42,7 @@ impl SundialApp {
     pub fn new(cc: &eframe::CreationContext<'_>, engine: Engine) -> Self {
         theme::apply(&cc.egui_ctx);
 
-        let (autostart, widget_visible) = {
-            let s = engine.settings.lock().unwrap();
-            (s.autostart, s.widget_visible)
-        };
+        let (autostart, widget_visible) = (engine.initial_autostart, engine.initial_visible);
 
         // The tray must be built on the thread running the winit message loop.
         // It pumps its own events on a background thread and wakes us via the
@@ -71,13 +69,15 @@ impl SundialApp {
             panel_open: false,
             closed_at: None,
             widget_visible,
+            autostart,
             panel_focused_once: false,
             last_pos: None,
             hwnd,
         }
     }
 
-    fn set_autostart(&self, enabled: bool) {
+    fn set_autostart(&mut self, enabled: bool) {
+        self.autostart = enabled;
         let _ = self.engine.commands.send(Command::SetAutostart(enabled));
         if let Some(tray) = &self.tray {
             tray.autostart_item.set_checked(enabled);
@@ -105,11 +105,14 @@ impl SundialApp {
     fn set_widget_visible(&mut self, ctx: &egui::Context, visible: bool) {
         self.widget_visible = visible;
         ctx.send_viewport_cmd(ViewportCommand::Visible(visible));
-        let _ = self.engine.commands.send(Command::SetWidgetVisible(visible));
+        let _ = self
+            .engine
+            .commands
+            .send(Command::SetWidgetVisible(visible));
     }
 
+    /// The engine's final save happens in `main` once the window has closed.
     fn quit(&self, ctx: &egui::Context) {
-        let _ = self.engine.commands.send(Command::Quit);
         ctx.send_viewport_cmd(ViewportCommand::Close);
     }
 }
@@ -135,10 +138,7 @@ impl eframe::App for SundialApp {
                     self.set_widget_visible(ctx, next);
                 }
                 TrayAction::ShowAnalytics => self.open_panel(),
-                TrayAction::ToggleAutostart => {
-                    let now = self.engine.settings.lock().unwrap().autostart;
-                    self.set_autostart(!now);
-                }
+                TrayAction::ToggleAutostart => self.set_autostart(!self.autostart),
                 TrayAction::Quit => self.quit(ctx),
             }
         }
@@ -150,11 +150,16 @@ impl eframe::App for SundialApp {
             ctx.send_viewport_cmd(ViewportCommand::Visible(false));
         }
 
-        let snap = self.engine.snapshot.lock().unwrap().clone();
+        // Copy only what the widget draws; the panel's full summary (which
+        // includes every day of history) is cloned only while it is open.
+        let (today, state) = {
+            let snap = self.engine.snapshot.lock().unwrap();
+            (snap.summary.today, snap.state)
+        };
 
         egui::CentralPanel::default()
             .frame(egui::Frame::NONE)
-            .show(ctx, |ui| match widget::show(ui, &snap) {
+            .show(ctx, |ui| match widget::show(ui, today, state) {
                 widget::WidgetAction::StartDrag => {
                     ctx.send_viewport_cmd(ViewportCommand::StartDrag)
                 }
@@ -181,13 +186,14 @@ impl eframe::App for SundialApp {
         }
 
         if self.panel_open {
-            self.show_panel(ctx, &snap);
+            self.show_panel(ctx);
         }
     }
 }
 
 impl SundialApp {
-    fn show_panel(&mut self, ctx: &egui::Context, snap: &crate::engine::Snapshot) {
+    fn show_panel(&mut self, ctx: &egui::Context) {
+        let snap = self.engine.snapshot.lock().unwrap().clone();
         let widget_rect = self
             .hwnd
             .and_then(monitor::window_rect)

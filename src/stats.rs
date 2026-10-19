@@ -34,15 +34,14 @@ pub fn summarize(days: &BTreeMap<NaiveDate, Duration>, today: NaiveDate) -> Summ
     }
 
     let window_start = today - chrono::Duration::days(AVERAGE_WINDOW_DAYS);
-    let tracked: Vec<Duration> = days
-        .iter()
-        .filter(|(d, v)| **d < today && **d >= window_start && !v.is_zero())
-        .map(|(_, v)| *v)
-        .collect();
-    let daily_average = if tracked.is_empty() {
+    let (sum, count) = days
+        .range(window_start..today)
+        .filter(|(_, v)| !v.is_zero())
+        .fold((Duration::ZERO, 0u32), |(sum, n), (_, v)| (sum + *v, n + 1));
+    let daily_average = if count == 0 {
         Duration::ZERO
     } else {
-        tracked.iter().sum::<Duration>() / tracked.len() as u32
+        sum / count
     };
 
     let mut history: Vec<(NaiveDate, Duration)> = days.iter().map(|(d, v)| (*d, *v)).collect();
@@ -57,9 +56,6 @@ pub fn summarize(days: &BTreeMap<NaiveDate, Duration>, today: NaiveDate) -> Summ
         history,
     }
 }
-
-/// Monday-first weekday initials for the chart axis.
-pub const WEEKDAY_INITIALS: [&str; 7] = ["M", "T", "W", "T", "F", "S", "S"];
 
 #[cfg(test)]
 mod tests {
@@ -113,7 +109,11 @@ mod tests {
         m.insert(d(12), h(5)); // Mon
         m.insert(d(14), h(4)); // Wed, Tue missing
         let s = summarize(&m, d(14));
-        assert_eq!(s.week_series[1], Some(Duration::ZERO), "past gap renders as a zero bar");
+        assert_eq!(
+            s.week_series[1],
+            Some(Duration::ZERO),
+            "past gap renders as a zero bar"
+        );
     }
 
     #[test]

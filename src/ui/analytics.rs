@@ -25,7 +25,8 @@ pub fn show(ui: &mut egui::Ui, summary: &Summary, state: DerivedState, today_ind
         ui.with_layout(egui::Layout::right_to_left(egui::Align::TOP), |ui| {
             ui.add_space(16.0);
             let (rect, _) = ui.allocate_exact_size(Vec2::splat(10.0), egui::Sense::hover());
-            ui.painter().circle_filled(rect.center(), 3.5, dot_colour(state));
+            ui.painter()
+                .circle_filled(rect.center(), 3.5, dot_colour(state));
         });
     });
 
@@ -59,7 +60,11 @@ pub fn show(ui: &mut egui::Ui, summary: &Summary, state: DerivedState, today_ind
     if summary.history.is_empty() {
         ui.vertical_centered(|ui| {
             ui.add_space(20.0);
-            ui.label(RichText::new("No history yet").size(12.0).color(theme::MUTED));
+            ui.label(
+                RichText::new("No history yet")
+                    .size(12.0)
+                    .color(theme::MUTED),
+            );
         });
         return;
     }
@@ -69,9 +74,14 @@ pub fn show(ui: &mut egui::Ui, summary: &Summary, state: DerivedState, today_ind
             ui.horizontal(|ui| {
                 ui.add_space(16.0);
                 ui.label(
-                    RichText::new(format!("{}  {:02} {}", weekday(date), date.day(), month(date)))
-                        .size(12.0)
-                        .color(theme::MUTED),
+                    RichText::new(format!(
+                        "{}  {:02} {}",
+                        weekday(date),
+                        date.day(),
+                        month(date)
+                    ))
+                    .size(12.0)
+                    .color(theme::MUTED),
                 );
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                     ui.add_space(16.0);

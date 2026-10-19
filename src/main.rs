@@ -15,8 +15,8 @@ fn main() -> eframe::Result<()> {
         return Ok(());
     };
 
-    let engine = engine::start();
-    let visible = engine.settings.lock().unwrap().widget_visible;
+    let (engine, engine_thread) = engine::start();
+    let visible = engine.initial_visible;
 
     // No `with_position`: egui scales it by the primary monitor's DPI, which
     // misplaces a widget saved on a monitor with different scaling. The app
@@ -30,7 +30,7 @@ fn main() -> eframe::Result<()> {
         .with_taskbar(false)
         .with_visible(visible);
 
-    eframe::run_native(
+    let result = eframe::run_native(
         "Sundial",
         eframe::NativeOptions {
             viewport,
@@ -41,5 +41,10 @@ fn main() -> eframe::Result<()> {
             ..Default::default()
         },
         Box::new(|cc| Ok(Box::new(app::SundialApp::new(cc, engine)))),
-    )
+    );
+
+    // The process exits when `main` returns, taking the engine thread with it,
+    // so wait here for its final save.
+    engine_thread.shutdown();
+    result
 }

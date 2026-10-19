@@ -1,7 +1,7 @@
 use super::theme;
-use crate::engine::Snapshot;
 use crate::tracker::DerivedState;
 use egui::{Align2, Color32, FontId, Sense, Vec2};
+use std::time::Duration;
 
 pub const SIZE: Vec2 = Vec2::new(140.0, 40.0);
 
@@ -23,19 +23,19 @@ pub fn dot_colour(state: DerivedState) -> Color32 {
     }
 }
 
-pub fn show(ui: &mut egui::Ui, snap: &Snapshot) -> WidgetAction {
+pub fn show(ui: &mut egui::Ui, today: Duration, state: DerivedState) -> WidgetAction {
     let rect = ui.max_rect();
 
     ui.painter().rect_filled(rect, theme::RADIUS, theme::BG);
 
     let dot_centre = egui::pos2(rect.left() + 16.0, rect.center().y);
     ui.painter()
-        .circle_filled(dot_centre, 3.5, dot_colour(snap.state));
+        .circle_filled(dot_centre, 3.5, dot_colour(state));
 
     ui.painter().text(
         egui::pos2(rect.left() + 32.0, rect.center().y),
         Align2::LEFT_CENTER,
-        theme::fmt_clock(snap.today),
+        theme::fmt_clock(today),
         FontId::monospace(16.0),
         theme::TEXT,
     );

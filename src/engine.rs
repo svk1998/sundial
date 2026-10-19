@@ -1,11 +1,12 @@
 use crate::platform::{self, SystemEvent};
 use crate::stats::{self, Summary};
-use crate::store::{Settings, Store};
+use crate::store::{Store, WidgetPos};
 use crate::tracker::{DerivedState, Tracker};
 use chrono::Local;
 use std::path::PathBuf;
-use std::sync::mpsc::{channel, Receiver, Sender};
+use std::sync::mpsc::{channel, Receiver, RecvTimeoutError, Sender};
 use std::sync::{Arc, Mutex};
+use std::thread::JoinHandle;
 use std::time::{Duration, Instant};
 
 const TICK: Duration = Duration::from_secs(1);
@@ -13,7 +14,6 @@ const FLUSH_EVERY: Duration = Duration::from_secs(30);
 
 #[derive(Debug, Clone)]
 pub struct Snapshot {
-    pub today: Duration,
     pub state: DerivedState,
     pub summary: Summary,
 }
@@ -28,28 +28,36 @@ pub enum Command {
 
 pub struct Engine {
     pub snapshot: Arc<Mutex<Snapshot>>,
-    pub settings: Arc<Mutex<Settings>>,
     pub commands: Sender<Command>,
-    pub initial_widget_pos: Option<crate::store::WidgetPos>,
+    /// Read from the registry, not the store, so a moved or deleted exe
+    /// self-corrects.
+    pub initial_autostart: bool,
+    pub initial_visible: bool,
+    pub initial_widget_pos: Option<WidgetPos>,
 }
 
-pub fn start() -> Engine {
+/// Owned by `main`, which outlives the UI: the process exits as soon as `main`
+/// returns, so the final save has to be waited for rather than requested.
+pub struct EngineThread {
+    commands: Sender<Command>,
+    handle: JoinHandle<()>,
+}
+
+impl EngineThread {
+    /// Saves and stops the engine. Called however the UI ended - tray Quit, a
+    /// WM_CLOSE from the installer, or session end.
+    pub fn shutdown(self) {
+        let _ = self.commands.send(Command::Quit);
+        let _ = self.handle.join();
+    }
+}
+
+pub fn start() -> (Engine, EngineThread) {
     let path = Store::data_path();
     let store = Store::load(&path);
-
-    let settings = Arc::new(Mutex::new(store.settings.clone()));
-
-    // Registry is the source of truth; a moved or deleted exe self-corrects.
-    {
-        let actual = platform::autostart::is_enabled();
-        settings.lock().unwrap().autostart = actual;
-    }
-
-    let initial_widget_pos = store.widget;
     let today = Local::now().date_naive();
 
     let snapshot = Arc::new(Mutex::new(Snapshot {
-        today: store.days.get(&today).copied().unwrap_or_default(),
         state: DerivedState::IdlePaused,
         summary: stats::summarize(&store.days, today),
     }));
@@ -60,24 +68,32 @@ pub fn start() -> Engine {
     }
 
     let (cmd_tx, cmd_rx) = channel::<Command>();
+    let engine = Engine {
+        snapshot: Arc::clone(&snapshot),
+        commands: cmd_tx.clone(),
+        initial_autostart: platform::autostart::is_enabled(),
+        initial_visible: store.settings.widget_visible,
+        initial_widget_pos: store.widget,
+    };
 
-    {
-        let snapshot = Arc::clone(&snapshot);
-        let settings = Arc::clone(&settings);
-        std::thread::Builder::new()
-            .name("sundial-engine".into())
-            .spawn(move || run(store, path, snapshot, settings, events_rx, cmd_rx))
-            .expect("spawn engine thread");
-    }
+    let handle = std::thread::Builder::new()
+        .name("sundial-engine".into())
+        .spawn(move || run(store, path, snapshot, events_rx, cmd_rx))
+        .expect("spawn engine thread");
 
-    Engine { snapshot, settings, commands: cmd_tx, initial_widget_pos }
+    (
+        engine,
+        EngineThread {
+            commands: cmd_tx,
+            handle,
+        },
+    )
 }
 
 fn run(
     mut store: Store,
     path: PathBuf,
     snapshot: Arc<Mutex<Snapshot>>,
-    settings: Arc<Mutex<Settings>>,
     events: Receiver<SystemEvent>,
     commands: Receiver<Command>,
 ) {
@@ -85,10 +101,34 @@ fn run(
     let mut tracker = Tracker::new(idle_timeout);
     let origin = Instant::now();
     let mut last_flush = Instant::now();
+    let mut next_tick = Instant::now() + TICK;
     let mut dirty = false;
 
     loop {
-        std::thread::sleep(TICK);
+        // Waiting on the channel rather than sleeping applies commands - above
+        // all Quit - as they arrive, instead of up to a tick late.
+        match commands.recv_timeout(next_tick.saturating_duration_since(Instant::now())) {
+            Ok(Command::Quit) | Err(RecvTimeoutError::Disconnected) => {
+                let _ = store.save(&path);
+                return;
+            }
+            Ok(Command::SetWidgetPos(x, y)) => {
+                store.widget = Some(WidgetPos { x, y });
+                dirty = true;
+                continue;
+            }
+            Ok(Command::SetWidgetVisible(v)) => {
+                store.settings.widget_visible = v;
+                dirty = true;
+                continue;
+            }
+            Ok(Command::SetAutostart(on)) => {
+                let _ = platform::autostart::set(on);
+                continue;
+            }
+            Err(RecvTimeoutError::Timeout) => {}
+        }
+        next_tick = Instant::now() + TICK;
 
         while let Ok(event) = events.try_recv() {
             match event {
@@ -103,50 +143,20 @@ fn run(
             }
         }
 
-        let mut quit = false;
-        while let Ok(cmd) = commands.try_recv() {
-            match cmd {
-                Command::SetWidgetPos(x, y) => {
-                    store.widget = Some(crate::store::WidgetPos { x, y });
-                    dirty = true;
-                }
-                Command::SetAutostart(on) => {
-                    let _ = platform::autostart::set(on);
-                    store.settings.autostart = on;
-                    settings.lock().unwrap().autostart = on;
-                    dirty = true;
-                }
-                Command::SetWidgetVisible(v) => {
-                    store.settings.widget_visible = v;
-                    settings.lock().unwrap().widget_visible = v;
-                    dirty = true;
-                }
-                Command::Quit => quit = true,
-            }
-        }
-
-        let credits = tracker.tick(
-            origin.elapsed(),
-            Local::now(),
-            platform::idle::since_last_input(),
-        );
-        for (date, amount) in &credits {
-            store.add(*date, *amount);
+        let now = Local::now();
+        for (date, amount) in
+            tracker.tick(origin.elapsed(), now, platform::idle::since_last_input())
+        {
+            store.add(date, amount);
             dirty = true;
         }
 
-        let today = Local::now().date_naive();
         {
             let mut snap = snapshot.lock().unwrap();
-            snap.today = store.days.get(&today).copied().unwrap_or_default();
             snap.state = tracker.state();
-            snap.summary = stats::summarize(&store.days, today);
+            snap.summary = stats::summarize(&store.days, now.date_naive());
         }
 
-        if quit {
-            let _ = store.save(&path);
-            return;
-        }
         if dirty && last_flush.elapsed() >= FLUSH_EVERY {
             let _ = store.save(&path);
             last_flush = Instant::now();

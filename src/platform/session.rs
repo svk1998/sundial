@@ -111,7 +111,10 @@ pub fn spawn(tx: Sender<SystemEvent>) -> Result<(), String> {
                 class,
                 w!("Sundial"),
                 WINDOW_STYLE(0),
-                0, 0, 0, 0,
+                0,
+                0,
+                0,
+                0,
                 HWND_MESSAGE,
                 None,
                 hinstance,
@@ -136,16 +139,17 @@ pub fn spawn(tx: Sender<SystemEvent>) -> Result<(), String> {
             // is bound here (not a temporary) and only unregistered once the
             // pump has exited. HPOWERNOTIFY is a plain Copy handle with no
             // Drop, so the release is explicit.
-            let power_notify =
-                match RegisterSuspendResumeNotification(HANDLE(hwnd.0), DEVICE_NOTIFY_WINDOW_HANDLE)
-                {
-                    Ok(h) => h,
-                    Err(e) => {
-                        let _ = WTSUnRegisterSessionNotification(hwnd);
-                        let _ = DestroyWindow(hwnd);
-                        fail!("RegisterSuspendResumeNotification failed: {e}");
-                    }
-                };
+            let power_notify = match RegisterSuspendResumeNotification(
+                HANDLE(hwnd.0),
+                DEVICE_NOTIFY_WINDOW_HANDLE,
+            ) {
+                Ok(h) => h,
+                Err(e) => {
+                    let _ = WTSUnRegisterSessionNotification(hwnd);
+                    let _ = DestroyWindow(hwnd);
+                    fail!("RegisterSuspendResumeNotification failed: {e}");
+                }
+            };
 
             let _ = status_tx.send(Ok(()));
 
@@ -168,7 +172,8 @@ pub fn spawn(tx: Sender<SystemEvent>) -> Result<(), String> {
         Ok(Ok(())) => Ok(()),
         Ok(Err(m)) => Err(m),
         Err(e) => {
-            let m = format!("session thread did not report startup within {STARTUP_TIMEOUT:?}: {e}");
+            let m =
+                format!("session thread did not report startup within {STARTUP_TIMEOUT:?}: {e}");
             eprintln!("sundial: {m}");
             Err(m)
         }

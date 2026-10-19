@@ -94,8 +94,6 @@ pub fn is_on_screen(rect: Rect) -> bool {
 /// of the extra viewports it creates, so this is how they are found.
 pub fn find_window(title: &str) -> Option<isize> {
     let wide: Vec<u16> = title.encode_utf16().chain(std::iter::once(0)).collect();
-    let found = unsafe {
-        FindWindowW(None, windows::core::PCWSTR(wide.as_ptr())).ok()?
-    };
+    let found = unsafe { FindWindowW(None, windows::core::PCWSTR(wide.as_ptr())).ok()? };
     Some(found.0 as isize)
 }

@@ -1,10 +1,10 @@
 use super::theme;
-use crate::stats::WEEKDAY_INITIALS;
 use egui::{Align2, FontId, Rect, Vec2};
 use std::time::Duration;
 
 const BAR_AREA_HEIGHT: f32 = 64.0;
 const LABEL_HEIGHT: f32 = 16.0;
+const WEEKDAY_INITIALS: [&str; 7] = ["M", "T", "W", "T", "F", "S", "S"];
 
 /// Monday-first 7-bar chart. `None` entries are future days and render as
 /// nothing; `Some(ZERO)` is a past day with no recorded time and renders as a

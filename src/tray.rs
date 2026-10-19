@@ -127,44 +127,44 @@ fn spawn_pump(
         .name("sundial-tray".into())
         .spawn(move || {
             loop {
-            let mut queued = Vec::new();
+                let mut queued = Vec::new();
 
-            while let Ok(event) = TrayIconEvent::receiver().try_recv() {
-                // Left click toggles. A double click arrives as two Up events and
-                // therefore toggles twice, which is the honest interpretation.
-                if let TrayIconEvent::Click {
-                    button: tray_icon::MouseButton::Left,
-                    button_state: tray_icon::MouseButtonState::Up,
-                    ..
-                } = event
-                {
-                    queued.push(TrayAction::ToggleWidget);
+                while let Ok(event) = TrayIconEvent::receiver().try_recv() {
+                    // Left click toggles. A double click arrives as two Up events and
+                    // therefore toggles twice, which is the honest interpretation.
+                    if let TrayIconEvent::Click {
+                        button: tray_icon::MouseButton::Left,
+                        button_state: tray_icon::MouseButtonState::Up,
+                        ..
+                    } = event
+                    {
+                        queued.push(TrayAction::ToggleWidget);
+                    }
                 }
-            }
 
-            while let Ok(MenuEvent { id }) = MenuEvent::receiver().try_recv() {
-                if id == ids.toggle {
-                    queued.push(TrayAction::ToggleWidget);
-                } else if id == ids.analytics {
-                    queued.push(TrayAction::ShowAnalytics);
-                } else if id == ids.autostart {
-                    queued.push(TrayAction::ToggleAutostart);
-                } else if id == ids.quit {
-                    queued.push(TrayAction::Quit);
+                while let Ok(MenuEvent { id }) = MenuEvent::receiver().try_recv() {
+                    if id == ids.toggle {
+                        queued.push(TrayAction::ToggleWidget);
+                    } else if id == ids.analytics {
+                        queued.push(TrayAction::ShowAnalytics);
+                    } else if id == ids.autostart {
+                        queued.push(TrayAction::ToggleAutostart);
+                    } else if id == ids.quit {
+                        queued.push(TrayAction::Quit);
+                    }
                 }
-            }
 
-            if !queued.is_empty() {
-                pending.lock().unwrap().extend(queued);
-                // A repaint request alone cannot wake a hidden window: eframe
-                // only runs `update` on WM_PAINT, which Windows never sends to an
-                // invisible window. Show it (without taking focus) so `update`
-                // runs; it re-hides the widget if that is the resulting state.
-                if let Some(hwnd) = hwnd {
-                    wake_hidden_window(hwnd);
+                if !queued.is_empty() {
+                    pending.lock().unwrap().extend(queued);
+                    // A repaint request alone cannot wake a hidden window: eframe
+                    // only runs `update` on WM_PAINT, which Windows never sends to an
+                    // invisible window. Show it (without taking focus) so `update`
+                    // runs; it re-hides the widget if that is the resulting state.
+                    if let Some(hwnd) = hwnd {
+                        wake_hidden_window(hwnd);
+                    }
+                    ctx.request_repaint();
                 }
-                ctx.request_repaint();
-            }
 
                 std::thread::sleep(POLL_INTERVAL);
             }
@@ -174,7 +174,9 @@ fn spawn_pump(
 
 fn wake_hidden_window(hwnd: isize) {
     use windows::Win32::Foundation::HWND;
-    use windows::Win32::UI::WindowsAndMessaging::{IsWindowVisible, ShowWindowAsync, SW_SHOWNOACTIVATE};
+    use windows::Win32::UI::WindowsAndMessaging::{
+        IsWindowVisible, ShowWindowAsync, SW_SHOWNOACTIVATE,
+    };
     let hwnd = HWND(hwnd as *mut core::ffi::c_void);
     unsafe {
         if !IsWindowVisible(hwnd).as_bool() {
