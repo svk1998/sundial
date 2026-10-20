@@ -100,6 +100,11 @@ impl Tray {
 
         let icon = match TrayIconBuilder::new()
             .with_menu(Box::new(menu.clone()))
+            // Left click toggles the widget (see the pump); the menu is
+            // right-click only. tray-icon defaults to showing it on left click
+            // too, which opened the menu while the toggle hid or showed the
+            // widget underneath it, garbling the choice.
+            .with_menu_on_left_click(false)
             .with_tooltip("Sundial")
             .with_icon(load_icon()?)
             .build()
