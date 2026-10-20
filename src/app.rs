@@ -308,12 +308,19 @@ impl SundialApp {
             egui::ViewportId::from_hash_of("analytics"),
             builder,
             |ctx, _class| {
+                // Painted over the whole window rather than as the panel's
+                // frame: a frame wraps the content, and when the content runs a
+                // little taller than the window its rounded bottom corners are
+                // drawn off-screen, leaving square ones.
+                ctx.layer_painter(egui::LayerId::background()).rect(
+                    ctx.screen_rect(),
+                    theme::RADIUS,
+                    palette.bg,
+                    egui::Stroke::new(1.0_f32, palette.edge),
+                    egui::StrokeKind::Inside,
+                );
                 egui::CentralPanel::default()
-                    .frame(
-                        egui::Frame::NONE
-                            .fill(palette.bg)
-                            .corner_radius(theme::RADIUS),
-                    )
+                    .frame(egui::Frame::NONE)
                     .show(ctx, |ui| {
                         analytics::show(ui, &snap.summary, snap.state, today_index, palette);
                     });
