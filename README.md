@@ -35,7 +35,12 @@ last 5 minutes. Locking, sleeping, or walking away pauses it. Totals reset at mi
 
 Download **`sundial-vX.Y.Z-setup.exe`** from the [latest release](https://github.com/svk1998/sundial/releases/latest)
 and run it. No admin rights needed; newer versions upgrade in place and keep your history.
-A portable `.exe` is also available.
+A portable `.exe` is also available. Or install with [Scoop](https://scoop.sh):
+
+```powershell
+scoop bucket add sundial https://github.com/svk1998/scoop-bucket
+scoop install sundial
+```
 
 > Sundial isn't code-signed yet. If SmartScreen warns, choose **More info → Run anyway**.
 
