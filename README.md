@@ -15,12 +15,7 @@
 
 <br>
 
-<table>
-  <tr>
-    <td align="center" valign="top"><img src="docs/screenshots/widget.png" alt="Sundial widget showing today's time"><br><sub>Floating widget</sub></td>
-    <td align="center" valign="top"><img src="docs/screenshots/analytics.png" alt="Sundial analytics panel"><br><sub>Analytics: click the widget</sub></td>
-  </tr>
-</table>
+<img src="docs/screenshots/demo.gif" width="820" alt="Sundial demo: the widget counts while you're active, turns amber when you're idle, opens analytics on click, and comes in light and dark themes">
 
 </div>
 
