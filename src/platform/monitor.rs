@@ -5,7 +5,8 @@ use windows::Win32::Graphics::Gdi::{
     MONITOR_DEFAULTTONULL,
 };
 use windows::Win32::UI::WindowsAndMessaging::{
-    FindWindowW, GetWindowRect, SetWindowPos, SWP_NOACTIVATE, SWP_NOSIZE, SWP_NOZORDER,
+    FindWindowW, GetWindowRect, IsWindowVisible, SetWindowPos, ShowWindow, SWP_NOACTIVATE,
+    SWP_NOSIZE, SWP_NOZORDER, SW_HIDE,
 };
 
 const MARGIN: f32 = 12.0;
@@ -75,6 +76,17 @@ pub fn move_window(raw: isize, pos: Pos2) {
             0,
             SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE,
         );
+    }
+}
+
+/// Hides a window directly through Win32. Use when the window was shown behind
+/// winit's back: winit still records it as hidden, so its own
+/// `set_visible(false)` is a no-op and the window would stay on screen.
+pub fn hide_window(raw: isize) {
+    unsafe {
+        if IsWindowVisible(hwnd(raw)).as_bool() {
+            let _ = ShowWindow(hwnd(raw), SW_HIDE);
+        }
     }
 }
 

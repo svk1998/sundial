@@ -166,9 +166,12 @@ impl SundialApp {
             .send(Command::SetWidgetVisible(visible));
     }
 
-    /// The engine's final save happens in `main` once the window has closed.
-    fn quit(&self, ctx: &egui::Context) {
-        ctx.send_viewport_cmd(ViewportCommand::Close);
+    /// The engine saves and ends the process. The tray icon is dropped first,
+    /// on this thread: exiting skips destructors, and an icon left registered
+    /// lingers in the notification area until hovered.
+    fn quit(&mut self) {
+        self.tray = None;
+        let _ = self.engine.commands.send(Command::Quit);
     }
 }
 
@@ -196,15 +199,21 @@ impl eframe::App for SundialApp {
                 TrayAction::ToggleAutostart => self.set_autostart(!self.autostart),
                 TrayAction::SetTheme(mode) => self.set_theme(mode),
                 TrayAction::SetWidgetSize(size) => self.set_widget_size(ctx, size),
-                TrayAction::Quit => self.quit(ctx),
+                TrayAction::Quit => self.quit(),
             }
         }
 
         // The tray pump shows a hidden window to get this frame to run at all.
         // The analytics panel is drawn from inside this window's frame, so the
         // window must stay up while the panel is open; otherwise put it back.
+        // The pump showed it via Win32, so winit still thinks it is hidden and
+        // would ignore `Visible(false)`, leaving a frozen widget on screen that
+        // no longer runs `update`; hide it the same way it was shown.
         if !self.widget_visible && !self.panel_open {
-            ctx.send_viewport_cmd(ViewportCommand::Visible(false));
+            match self.hwnd {
+                Some(hwnd) => monitor::hide_window(hwnd),
+                None => ctx.send_viewport_cmd(ViewportCommand::Visible(false)),
+            }
         }
 
         let palette = self.palette(ctx);

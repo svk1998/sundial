@@ -58,12 +58,34 @@ Root: HKCU; Subkey: "Software\Microsoft\Windows\CurrentVersion\Run"; ValueType: 
 Filename: "{app}\sundial.exe"; Description: "Launch Sundial"; Flags: nowait postinstall skipifsilent
 
 [Code]
-// Stops a running Sundial so its exe can be replaced or removed. Asks it to close
-// first, then forces it; at worst that loses the last <30s of unsaved time.
+function OpenEvent(dwDesiredAccess: DWORD; bInheritHandle: BOOL; lpName: String): THandle;
+  external 'OpenEventW@kernel32.dll stdcall';
+function SetEvent(hEvent: THandle): BOOL;
+  external 'SetEvent@kernel32.dll stdcall';
+function CloseHandle(hObject: THandle): BOOL;
+  external 'CloseHandle@kernel32.dll stdcall';
+
+const
+  EVENT_MODIFY_STATE = $0002;
+
+// Stops a running Sundial so its exe can be replaced or removed. v0.1.6+ listens
+// on a named event (src/platform/quit_signal.rs), saves and exits within a second;
+// that works even with the widget hidden, where a WM_CLOSE reaches no window.
+// Older versions don't have it, so a close request and then a force-kill follow,
+// which at worst lose the last <30s of unsaved time.
 procedure StopSundial();
 var
   ResultCode: Integer;
+  QuitEvent: THandle;
 begin
+  QuitEvent := OpenEvent(EVENT_MODIFY_STATE, False, 'Local\Sundial.Quit');
+  if QuitEvent <> 0 then
+  begin
+    SetEvent(QuitEvent);
+    // Close at once: a handle kept open would keep the event signalled.
+    CloseHandle(QuitEvent);
+    Sleep(2000);
+  end;
   Exec(ExpandConstant('{sys}\taskkill.exe'), '/im sundial.exe', '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
   Sleep(1000);
   Exec(ExpandConstant('{sys}\taskkill.exe'), '/f /im sundial.exe', '', SW_HIDE, ewWaitUntilTerminated, ResultCode);

@@ -3,7 +3,7 @@ use crate::stats::{self, Summary};
 use crate::store::{Store, ThemeMode, WidgetPos, WidgetSize};
 use crate::tracker::{DerivedState, Tracker};
 use chrono::Local;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::mpsc::{channel, Receiver, RecvTimeoutError, Sender};
 use std::sync::{Arc, Mutex};
 use std::thread::JoinHandle;
@@ -25,6 +25,7 @@ pub enum Command {
     SetWidgetVisible(bool),
     SetTheme(ThemeMode),
     SetWidgetSize(WidgetSize),
+    /// Saves and exits the process; it does not return.
     Quit,
 }
 
@@ -48,8 +49,8 @@ pub struct EngineThread {
 }
 
 impl EngineThread {
-    /// Saves and stops the engine. Called however the UI ended - tray Quit, a
-    /// WM_CLOSE from the installer, or session end.
+    /// Saves and ends the process (see `save_and_exit`). Called when the UI
+    /// ends on its own, e.g. a WM_CLOSE to the visible widget.
     pub fn shutdown(self) {
         let _ = self.commands.send(Command::Quit);
         let _ = self.handle.join();
@@ -109,15 +110,13 @@ fn run(
     let mut last_flush = Instant::now();
     let mut next_tick = Instant::now() + TICK;
     let mut dirty = false;
+    let quit_signal = platform::quit_signal::QuitSignal::create();
 
     loop {
         // Waiting on the channel rather than sleeping applies commands - above
         // all Quit - as they arrive, instead of up to a tick late.
         match commands.recv_timeout(next_tick.saturating_duration_since(Instant::now())) {
-            Ok(Command::Quit) | Err(RecvTimeoutError::Disconnected) => {
-                let _ = store.save(&path);
-                return;
-            }
+            Ok(Command::Quit) | Err(RecvTimeoutError::Disconnected) => save_and_exit(&store, &path),
             Ok(Command::SetWidgetPos(x, y)) => {
                 store.widget = Some(WidgetPos { x, y });
                 dirty = true;
@@ -143,6 +142,9 @@ fn run(
                 continue;
             }
             Err(RecvTimeoutError::Timeout) => {}
+        }
+        if quit_signal.as_ref().is_some_and(|q| q.is_set()) {
+            save_and_exit(&store, &path);
         }
         next_tick = Instant::now() + TICK;
 
@@ -179,4 +181,13 @@ fn run(
             dirty = false;
         }
     }
+}
+
+/// Ends the whole process from the engine thread once the data is on disk.
+/// Exiting here, rather than returning and letting `main` unwind, doesn't
+/// depend on the UI: with the widget hidden, eframe never runs the frame that
+/// would complete its own close, so a Quit would leave the process running.
+fn save_and_exit(store: &Store, path: &Path) -> ! {
+    let _ = store.save(path);
+    std::process::exit(0);
 }
