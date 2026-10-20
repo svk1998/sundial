@@ -29,7 +29,8 @@ last 5 minutes. Locking, sleeping, or walking away pauses it. Totals reset at mi
 
 ## Features
 
-- Floating widget with today's total and a live status dot
+- Floating widget with today's total and a live status dot, in three sizes
+- Light and dark themes, or match Windows automatically
 - Analytics: yesterday, this week, daily average, and a 7-day chart
 - Lives in the tray; optional start with Windows
 - Local-only: no account, no network, one small JSON file
@@ -51,7 +52,7 @@ Uninstall from **Settings → Apps → Sundial**.
 |---|---|
 | **Drag** the widget | Move it |
 | **Click** the widget | Open analytics |
-| **Right-click** the widget or tray icon | Hide/show, analytics, start with Windows, quit |
+| **Right-click** the widget or tray icon | Hide/show, analytics, theme, widget size, start with Windows, quit |
 | Status dot | 🟢 counting · 🟠 idle · ⚪ locked |
 
 Hiding the widget doesn't stop tracking.

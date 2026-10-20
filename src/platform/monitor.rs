@@ -90,10 +90,85 @@ pub fn is_on_screen(rect: Rect) -> bool {
     unsafe { !MonitorFromRect(&r, MONITOR_DEFAULTTONULL).is_invalid() }
 }
 
+/// Where `rect` must move so it lies inside `area`. Where it can't fit, its
+/// top-left edge wins, keeping the start of the widget visible.
+fn clamp_into(rect: Rect, area: Rect) -> Pos2 {
+    let x = rect.min.x.min(area.max.x - rect.width()).max(area.min.x);
+    let y = rect.min.y.min(area.max.y - rect.height()).max(area.min.y);
+    Pos2::new(x, y)
+}
+
+/// Pulls a window back inside the work area of the monitor it is mostly on.
+/// Growing the widget near a screen edge would otherwise push part of it
+/// off-screen.
+pub fn keep_on_work_area(raw: isize) {
+    let Some(rect) = window_rect(raw) else { return };
+    let r = RECT {
+        left: rect.left() as i32,
+        top: rect.top() as i32,
+        right: rect.right() as i32,
+        bottom: rect.bottom() as i32,
+    };
+    let work = unsafe {
+        let hmon = MonitorFromRect(&r, MONITOR_DEFAULTTONEAREST);
+        let mut info = MONITORINFO {
+            cbSize: std::mem::size_of::<MONITORINFO>() as u32,
+            ..Default::default()
+        };
+        if !GetMonitorInfoW(hmon, &mut info).as_bool() {
+            return;
+        }
+        info.rcWork
+    };
+    let area = Rect::from_min_max(
+        Pos2::new(work.left as f32, work.top as f32),
+        Pos2::new(work.right as f32, work.bottom as f32),
+    );
+    let target = clamp_into(rect, area);
+    if target != rect.min {
+        move_window(raw, target);
+    }
+}
+
 /// A top-level window by exact title. egui does not expose the native handles
 /// of the extra viewports it creates, so this is how they are found.
 pub fn find_window(title: &str) -> Option<isize> {
     let wide: Vec<u16> = title.encode_utf16().chain(std::iter::once(0)).collect();
     let found = unsafe { FindWindowW(None, windows::core::PCWSTR(wide.as_ptr())).ok()? };
     Some(found.0 as isize)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn area() -> Rect {
+        Rect::from_min_max(Pos2::new(1920.0, -330.0), Pos2::new(3840.0, 710.0))
+    }
+
+    #[test]
+    fn rect_already_inside_stays_put() {
+        let r = Rect::from_min_size(Pos2::new(2000.0, 0.0), Vec2::new(210.0, 60.0));
+        assert_eq!(clamp_into(r, area()), r.min);
+    }
+
+    /// Growing the widget at the right edge would push it off the monitor.
+    #[test]
+    fn rect_past_the_right_edge_is_pulled_back() {
+        let r = Rect::from_min_size(Pos2::new(3655.0, -296.0), Vec2::new(210.0, 60.0));
+        assert_eq!(clamp_into(r, area()), Pos2::new(3630.0, -296.0));
+    }
+
+    #[test]
+    fn rect_past_the_bottom_and_left_is_pulled_back() {
+        let r = Rect::from_min_size(Pos2::new(1900.0, 700.0), Vec2::new(210.0, 60.0));
+        assert_eq!(clamp_into(r, area()), Pos2::new(1920.0, 650.0));
+    }
+
+    /// A rect larger than the area pins to its top-left rather than panicking.
+    #[test]
+    fn rect_larger_than_area_pins_to_top_left() {
+        let r = Rect::from_min_size(Pos2::new(3000.0, 0.0), Vec2::new(5000.0, 60.0));
+        assert_eq!(clamp_into(r, area()), Pos2::new(1920.0, 0.0));
+    }
 }

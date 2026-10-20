@@ -1,9 +1,14 @@
-use super::theme;
+use super::theme::{self, Palette};
 use crate::tracker::DerivedState;
 use egui::{Align2, Color32, FontId, Sense, Vec2};
 use std::time::Duration;
 
-pub const SIZE: Vec2 = Vec2::new(140.0, 40.0);
+/// The widget at `WidgetSize::Small`; other sizes scale everything uniformly.
+const BASE: Vec2 = Vec2::new(140.0, 40.0);
+
+pub fn size(scale: f32) -> Vec2 {
+    BASE * scale
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum WidgetAction {
@@ -15,29 +20,42 @@ pub enum WidgetAction {
 
 /// Green while counting, amber while idle, grey while locked. With idle-pause in
 /// play, a stopped timer and a running one are otherwise indistinguishable.
-pub fn dot_colour(state: DerivedState) -> Color32 {
+pub fn dot_colour(state: DerivedState, p: &Palette) -> Color32 {
     match state {
-        DerivedState::Counting => theme::GREEN,
-        DerivedState::IdlePaused => theme::AMBER,
-        DerivedState::Locked => theme::GREY,
+        DerivedState::Counting => p.green,
+        DerivedState::IdlePaused => p.amber,
+        DerivedState::Locked => p.grey,
     }
 }
 
-pub fn show(ui: &mut egui::Ui, today: Duration, state: DerivedState) -> WidgetAction {
+pub fn show(
+    ui: &mut egui::Ui,
+    today: Duration,
+    state: DerivedState,
+    p: &Palette,
+    scale: f32,
+) -> WidgetAction {
     let rect = ui.max_rect();
+    let radius = (f32::from(theme::RADIUS) * scale).round() as u8;
 
-    ui.painter().rect_filled(rect, theme::RADIUS, theme::BG);
+    ui.painter().rect(
+        rect,
+        radius,
+        p.bg,
+        egui::Stroke::new(1.0_f32, p.edge),
+        egui::StrokeKind::Inside,
+    );
 
-    let dot_centre = egui::pos2(rect.left() + 16.0, rect.center().y);
+    let dot_centre = egui::pos2(rect.left() + 16.0 * scale, rect.center().y);
     ui.painter()
-        .circle_filled(dot_centre, 3.5, dot_colour(state));
+        .circle_filled(dot_centre, 3.5 * scale, dot_colour(state, p));
 
     ui.painter().text(
-        egui::pos2(rect.left() + 32.0, rect.center().y),
+        egui::pos2(rect.left() + 32.0 * scale, rect.center().y),
         Align2::LEFT_CENTER,
         theme::fmt_clock(today),
-        FontId::monospace(16.0),
-        theme::TEXT,
+        FontId::monospace(16.0 * scale),
+        p.text,
     );
 
     let response = ui.interact(rect, ui.id().with("widget"), Sense::click_and_drag());

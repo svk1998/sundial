@@ -1,6 +1,6 @@
 use crate::platform::{self, SystemEvent};
 use crate::stats::{self, Summary};
-use crate::store::{Store, WidgetPos};
+use crate::store::{Store, ThemeMode, WidgetPos, WidgetSize};
 use crate::tracker::{DerivedState, Tracker};
 use chrono::Local;
 use std::path::PathBuf;
@@ -23,6 +23,8 @@ pub enum Command {
     SetWidgetPos(f32, f32),
     SetAutostart(bool),
     SetWidgetVisible(bool),
+    SetTheme(ThemeMode),
+    SetWidgetSize(WidgetSize),
     Quit,
 }
 
@@ -34,6 +36,8 @@ pub struct Engine {
     pub initial_autostart: bool,
     pub initial_visible: bool,
     pub initial_widget_pos: Option<WidgetPos>,
+    pub initial_theme: ThemeMode,
+    pub initial_size: WidgetSize,
 }
 
 /// Owned by `main`, which outlives the UI: the process exits as soon as `main`
@@ -74,6 +78,8 @@ pub fn start() -> (Engine, EngineThread) {
         initial_autostart: platform::autostart::is_enabled(),
         initial_visible: store.settings.widget_visible,
         initial_widget_pos: store.widget,
+        initial_theme: store.settings.theme,
+        initial_size: store.settings.widget_size,
     };
 
     let handle = std::thread::Builder::new()
@@ -119,6 +125,16 @@ fn run(
             }
             Ok(Command::SetWidgetVisible(v)) => {
                 store.settings.widget_visible = v;
+                dirty = true;
+                continue;
+            }
+            Ok(Command::SetTheme(mode)) => {
+                store.settings.theme = mode;
+                dirty = true;
+                continue;
+            }
+            Ok(Command::SetWidgetSize(size)) => {
+                store.settings.widget_size = size;
                 dirty = true;
                 continue;
             }

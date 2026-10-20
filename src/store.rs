@@ -17,6 +17,10 @@ pub struct Settings {
     /// without it.
     #[serde(rename = "autostart")]
     legacy_autostart: bool,
+    #[serde(deserialize_with = "or_default")]
+    pub theme: ThemeMode,
+    #[serde(deserialize_with = "or_default")]
+    pub widget_size: WidgetSize,
 }
 
 impl Default for Settings {
@@ -25,8 +29,50 @@ impl Default for Settings {
             idle_timeout_secs: 300,
             widget_visible: true,
             legacy_autostart: false,
+            theme: ThemeMode::default(),
+            widget_size: WidgetSize::default(),
         }
     }
+}
+
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum ThemeMode {
+    /// Follows the Windows app theme (Settings > Personalization > Colors).
+    #[default]
+    System,
+    Dark,
+    Light,
+}
+
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum WidgetSize {
+    #[default]
+    Small,
+    Medium,
+    Large,
+}
+
+impl WidgetSize {
+    pub fn scale(self) -> f32 {
+        match self {
+            WidgetSize::Small => 1.0,
+            WidgetSize::Medium => 1.25,
+            WidgetSize::Large => 1.5,
+        }
+    }
+}
+
+/// An unrecognised value falls back to the default rather than failing the
+/// whole file, which would quarantine the user's history over a preference.
+fn or_default<'de, D, T>(deserializer: D) -> Result<T, D::Error>
+where
+    D: serde::Deserializer<'de>,
+    T: serde::de::DeserializeOwned + Default,
+{
+    let value = serde_json::Value::deserialize(deserializer)?;
+    Ok(T::deserialize(value).unwrap_or_default())
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
@@ -226,6 +272,59 @@ mod tests {
         assert_eq!(s.settings.idle_timeout_secs, 300);
         assert!(!s.settings.widget_visible);
         assert_eq!(files_containing(&dir, "corrupt"), 0);
+    }
+
+    #[test]
+    fn appearance_defaults_to_system_theme_and_small_widget() {
+        let dir = tempdir();
+        let path = dir.join("data.json");
+        std::fs::write(&path, br#"{"version":1,"days":{},"settings":{}}"#).unwrap();
+
+        let s = Store::load(&path);
+        assert_eq!(s.settings.theme, ThemeMode::System);
+        assert_eq!(s.settings.widget_size, WidgetSize::Small);
+    }
+
+    #[test]
+    fn appearance_round_trips_through_disk() {
+        let dir = tempdir();
+        let path = dir.join("data.json");
+        let mut s = Store::default();
+        s.settings.theme = ThemeMode::Light;
+        s.settings.widget_size = WidgetSize::Large;
+        s.save(&path).unwrap();
+
+        let loaded = Store::load(&path);
+        assert_eq!(loaded.settings.theme, ThemeMode::Light);
+        assert_eq!(loaded.settings.widget_size, WidgetSize::Large);
+    }
+
+    /// A value this version doesn't know (written by a newer one, or a typo
+    /// when hand-editing) must not quarantine the whole file and its history.
+    #[test]
+    fn unknown_appearance_values_fall_back_without_quarantine() {
+        let dir = tempdir();
+        let path = dir.join("data.json");
+        std::fs::write(
+            &path,
+            br#"{"version":1,"days":{"2026-10-18":60},
+                "settings":{"theme":"sepia","widget_size":"huge","idle_timeout_secs":120}}"#,
+        )
+        .unwrap();
+
+        let s = Store::load(&path);
+        assert_eq!(s.days.get(&d(2026, 10, 18)), Some(&Duration::from_secs(60)));
+        assert_eq!(s.settings.theme, ThemeMode::System);
+        assert_eq!(s.settings.widget_size, WidgetSize::Small);
+        assert_eq!(s.settings.idle_timeout_secs, 120);
+        assert_eq!(files_containing(&dir, "corrupt"), 0);
+    }
+
+    #[test]
+    fn widget_sizes_scale_up_from_small() {
+        assert_eq!(WidgetSize::Small.scale(), 1.0);
+        assert_eq!(WidgetSize::Medium.scale(), 1.25);
+        assert_eq!(WidgetSize::Large.scale(), 1.5);
     }
 
     #[test]

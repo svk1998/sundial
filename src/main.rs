@@ -17,12 +17,13 @@ fn main() -> eframe::Result<()> {
 
     let (engine, engine_thread) = engine::start();
     let visible = engine.initial_visible;
+    let widget_size = ui::widget::size(engine.initial_size.scale());
 
     // No `with_position`: egui scales it by the primary monitor's DPI, which
     // misplaces a widget saved on a monitor with different scaling. The app
     // restores the saved position itself, in physical pixels.
     let viewport = egui::ViewportBuilder::default()
-        .with_inner_size(ui::widget::SIZE)
+        .with_inner_size(widget_size)
         .with_decorations(false)
         .with_transparent(true)
         .with_always_on_top()

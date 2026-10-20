@@ -1,6 +1,9 @@
+use crate::store::{ThemeMode, WidgetSize};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
-use tray_icon::menu::{CheckMenuItem, Menu, MenuEvent, MenuId, MenuItem, PredefinedMenuItem};
+use tray_icon::menu::{
+    CheckMenuItem, Menu, MenuEvent, MenuId, MenuItem, PredefinedMenuItem, Submenu,
+};
 use tray_icon::{TrayIcon, TrayIconBuilder, TrayIconEvent};
 
 const POLL_INTERVAL: Duration = Duration::from_millis(100);
@@ -10,8 +13,22 @@ pub enum TrayAction {
     ToggleWidget,
     ShowAnalytics,
     ToggleAutostart,
+    SetTheme(ThemeMode),
+    SetWidgetSize(WidgetSize),
     Quit,
 }
+
+const THEMES: [(ThemeMode, &str); 3] = [
+    (ThemeMode::System, "Match Windows"),
+    (ThemeMode::Dark, "Dark"),
+    (ThemeMode::Light, "Light"),
+];
+
+const SIZES: [(WidgetSize, &str); 3] = [
+    (WidgetSize::Small, "Small"),
+    (WidgetSize::Medium, "Medium"),
+    (WidgetSize::Large, "Large"),
+];
 
 /// The tray icon is the only way back once the widget is hidden, so it stays
 /// present for the whole life of the process.
@@ -20,6 +37,8 @@ pub struct Tray {
     menu: Menu,
     pending: Arc<Mutex<Vec<TrayAction>>>,
     pub autostart_item: CheckMenuItem,
+    theme_items: Vec<(ThemeMode, CheckMenuItem)>,
+    size_items: Vec<(WidgetSize, CheckMenuItem)>,
 }
 
 fn load_icon() -> Option<tray_icon::Icon> {
@@ -33,19 +52,47 @@ struct Ids {
     toggle: MenuId,
     analytics: MenuId,
     autostart: MenuId,
+    themes: Vec<(ThemeMode, MenuId)>,
+    sizes: Vec<(WidgetSize, MenuId)>,
     quit: MenuId,
 }
 
 impl Tray {
-    pub fn new(autostart: bool, ctx: egui::Context, hwnd: Option<isize>) -> Option<Tray> {
+    pub fn new(
+        autostart: bool,
+        theme: ThemeMode,
+        size: WidgetSize,
+        ctx: egui::Context,
+        hwnd: Option<isize>,
+    ) -> Option<Tray> {
         let toggle = MenuItem::new("Show/Hide widget", true, None);
         let analytics = MenuItem::new("Analytics", true, None);
         let autostart_item = CheckMenuItem::new("Start with Windows", true, autostart, None);
         let quit = MenuItem::new("Quit", true, None);
 
+        let theme_menu = Submenu::new("Theme", true);
+        let theme_items: Vec<_> = THEMES
+            .iter()
+            .map(|&(mode, label)| (mode, CheckMenuItem::new(label, true, mode == theme, None)))
+            .collect();
+        for (_, item) in &theme_items {
+            theme_menu.append(item).ok()?;
+        }
+        let size_menu = Submenu::new("Widget size", true);
+        let size_items: Vec<_> = SIZES
+            .iter()
+            .map(|&(s, label)| (s, CheckMenuItem::new(label, true, s == size, None)))
+            .collect();
+        for (_, item) in &size_items {
+            size_menu.append(item).ok()?;
+        }
+
         let menu = Menu::new();
         menu.append(&toggle).ok()?;
         menu.append(&analytics).ok()?;
+        menu.append(&PredefinedMenuItem::separator()).ok()?;
+        menu.append(&theme_menu).ok()?;
+        menu.append(&size_menu).ok()?;
         menu.append(&PredefinedMenuItem::separator()).ok()?;
         menu.append(&autostart_item).ok()?;
         menu.append(&PredefinedMenuItem::separator()).ok()?;
@@ -68,6 +115,14 @@ impl Tray {
             toggle: toggle.id().clone(),
             analytics: analytics.id().clone(),
             autostart: autostart_item.id().clone(),
+            themes: theme_items
+                .iter()
+                .map(|(m, i)| (*m, i.id().clone()))
+                .collect(),
+            sizes: size_items
+                .iter()
+                .map(|(s, i)| (*s, i.id().clone()))
+                .collect(),
             quit: quit.id().clone(),
         };
 
@@ -79,7 +134,20 @@ impl Tray {
             menu,
             pending,
             autostart_item,
+            theme_items,
+            size_items,
         })
+    }
+
+    /// Check items toggle themselves when clicked; reassert the single current
+    /// choice so each submenu behaves like a radio group.
+    pub fn show_appearance(&self, theme: ThemeMode, size: WidgetSize) {
+        for (mode, item) in &self.theme_items {
+            item.set_checked(*mode == theme);
+        }
+        for (s, item) in &self.size_items {
+            item.set_checked(*s == size);
+        }
     }
 
     /// Takes everything the pump has queued since the last call.
@@ -149,6 +217,10 @@ fn spawn_pump(
                         queued.push(TrayAction::ShowAnalytics);
                     } else if id == ids.autostart {
                         queued.push(TrayAction::ToggleAutostart);
+                    } else if let Some((mode, _)) = ids.themes.iter().find(|(_, i)| *i == id) {
+                        queued.push(TrayAction::SetTheme(*mode));
+                    } else if let Some((size, _)) = ids.sizes.iter().find(|(_, i)| *i == id) {
+                        queued.push(TrayAction::SetWidgetSize(*size));
                     } else if id == ids.quit {
                         queued.push(TrayAction::Quit);
                     }

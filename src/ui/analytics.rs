@@ -1,3 +1,4 @@
+use super::theme::Palette;
 use super::{chart, theme};
 use crate::stats::Summary;
 use crate::tracker::DerivedState;
@@ -8,25 +9,31 @@ use std::time::Duration;
 
 pub const SIZE: Vec2 = Vec2::new(320.0, 290.0);
 
-pub fn show(ui: &mut egui::Ui, summary: &Summary, state: DerivedState, today_index: usize) {
+pub fn show(
+    ui: &mut egui::Ui,
+    summary: &Summary,
+    state: DerivedState,
+    today_index: usize,
+    p: &Palette,
+) {
     ui.add_space(14.0);
 
     // Today is the hero number - it is what you opened the panel to see.
     ui.horizontal(|ui| {
         ui.add_space(16.0);
         ui.vertical(|ui| {
-            ui.label(RichText::new("TODAY").size(10.0).color(theme::MUTED));
+            ui.label(RichText::new("TODAY").size(10.0).color(p.muted));
             ui.label(
                 RichText::new(theme::fmt_human(summary.today))
                     .font(FontId::proportional(30.0))
-                    .color(theme::TEXT),
+                    .color(p.text),
             );
         });
         ui.with_layout(egui::Layout::right_to_left(egui::Align::TOP), |ui| {
             ui.add_space(16.0);
             let (rect, _) = ui.allocate_exact_size(Vec2::splat(10.0), egui::Sense::hover());
             ui.painter()
-                .circle_filled(rect.center(), 3.5, dot_colour(state));
+                .circle_filled(rect.center(), 3.5, dot_colour(state, p));
         });
     });
 
@@ -35,9 +42,9 @@ pub fn show(ui: &mut egui::Ui, summary: &Summary, state: DerivedState, today_ind
     // One scannable row rather than three stacked rows, which keeps the panel short.
     ui.horizontal(|ui| {
         ui.add_space(16.0);
-        stat(ui, "Yesterday", summary.yesterday);
-        stat(ui, "This week", summary.this_week);
-        stat(ui, "Daily avg", summary.daily_average);
+        stat(ui, "Yesterday", summary.yesterday, p);
+        stat(ui, "This week", summary.this_week, p);
+        stat(ui, "Daily avg", summary.daily_average, p);
     });
 
     ui.add_space(16.0);
@@ -49,7 +56,7 @@ pub fn show(ui: &mut egui::Ui, summary: &Summary, state: DerivedState, today_ind
         let width = ui.available_width() - 12.0;
         ui.vertical(|ui| {
             ui.set_width(width);
-            chart::show(ui, &summary.week_series, today_index);
+            chart::show(ui, &summary.week_series, today_index, p);
         });
     });
 
@@ -60,11 +67,7 @@ pub fn show(ui: &mut egui::Ui, summary: &Summary, state: DerivedState, today_ind
     if summary.history.is_empty() {
         ui.vertical_centered(|ui| {
             ui.add_space(20.0);
-            ui.label(
-                RichText::new("No history yet")
-                    .size(12.0)
-                    .color(theme::MUTED),
-            );
+            ui.label(RichText::new("No history yet").size(12.0).color(p.muted));
         });
         return;
     }
@@ -81,14 +84,14 @@ pub fn show(ui: &mut egui::Ui, summary: &Summary, state: DerivedState, today_ind
                         month(date)
                     ))
                     .size(12.0)
-                    .color(theme::MUTED),
+                    .color(p.muted),
                 );
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                     ui.add_space(16.0);
                     ui.label(
                         RichText::new(theme::fmt_human(*value))
                             .size(12.0)
-                            .color(theme::TEXT),
+                            .color(p.text),
                     );
                 });
             });
@@ -97,13 +100,13 @@ pub fn show(ui: &mut egui::Ui, summary: &Summary, state: DerivedState, today_ind
     });
 }
 
-fn stat(ui: &mut egui::Ui, label: &str, value: Duration) {
+fn stat(ui: &mut egui::Ui, label: &str, value: Duration, p: &Palette) {
     ui.vertical(|ui| {
-        ui.label(RichText::new(label).size(10.0).color(theme::MUTED));
+        ui.label(RichText::new(label).size(10.0).color(p.muted));
         ui.label(
             RichText::new(theme::fmt_human(value))
                 .size(14.0)
-                .color(theme::TEXT),
+                .color(p.text),
         );
     });
     ui.add_space(14.0);

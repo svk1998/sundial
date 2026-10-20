@@ -1,5 +1,6 @@
 use crate::engine::{Command, Engine};
 use crate::platform::monitor;
+use crate::store::{ThemeMode, WidgetSize};
 use crate::tray::{Tray, TrayAction};
 use crate::ui::{analytics, theme, widget};
 use chrono::Datelike;
@@ -22,6 +23,9 @@ const PANEL_TITLE: &str = "Sundial Analytics";
 /// toggle for this long after the panel closes.
 const REOPEN_GUARD: Duration = Duration::from_millis(150);
 
+/// How long after startup or a size change the widget is held on-screen.
+const KEEP_ON_SCREEN_FOR: Duration = Duration::from_secs(2);
+
 pub struct SundialApp {
     engine: Engine,
     tray: Option<Tray>,
@@ -29,6 +33,14 @@ pub struct SundialApp {
     closed_at: Option<Instant>,
     widget_visible: bool,
     autostart: bool,
+    theme_mode: ThemeMode,
+    widget_size: WidgetSize,
+    /// The palette last pushed into egui's style; re-applied only on change.
+    applied: Option<theme::Palette>,
+    /// Until then, keep the widget inside its monitor's work area. Resizes land
+    /// asynchronously, so this runs for a moment after one rather than once;
+    /// it is time-boxed so it never fights a drag across monitors.
+    keep_on_screen_until: Option<Instant>,
     /// The panel closes on focus loss, but it does not hold focus on the frame
     /// it is created - the widget still does. Without this latch it would
     /// dismiss itself immediately and could never be seen.
@@ -40,9 +52,8 @@ pub struct SundialApp {
 
 impl SundialApp {
     pub fn new(cc: &eframe::CreationContext<'_>, engine: Engine) -> Self {
-        theme::apply(&cc.egui_ctx);
-
         let (autostart, widget_visible) = (engine.initial_autostart, engine.initial_visible);
+        let (theme_mode, widget_size) = (engine.initial_theme, engine.initial_size);
 
         // The tray must be built on the thread running the winit message loop.
         // It pumps its own events on a background thread and wakes us via the
@@ -50,11 +61,20 @@ impl SundialApp {
         let hwnd = window_hwnd(cc);
         if let (Some(hwnd), Some(p)) = (hwnd, engine.initial_widget_pos) {
             let pos = egui::pos2(p.x, p.y);
-            if monitor::is_on_screen(egui::Rect::from_min_size(pos, widget::SIZE)) {
+            if monitor::is_on_screen(egui::Rect::from_min_size(
+                pos,
+                widget::size(widget_size.scale()),
+            )) {
                 monitor::move_window(hwnd, pos);
             }
         }
-        let tray = Tray::new(autostart, cc.egui_ctx.clone(), hwnd);
+        let tray = Tray::new(
+            autostart,
+            theme_mode,
+            widget_size,
+            cc.egui_ctx.clone(),
+            hwnd,
+        );
 
         match (&tray, hwnd) {
             (Some(tray), Some(hwnd)) => tray.attach_to(hwnd),
@@ -70,6 +90,10 @@ impl SundialApp {
             closed_at: None,
             widget_visible,
             autostart,
+            theme_mode,
+            widget_size,
+            applied: None,
+            keep_on_screen_until: Some(Instant::now() + KEEP_ON_SCREEN_FOR),
             panel_focused_once: false,
             last_pos: None,
             hwnd,
@@ -82,6 +106,37 @@ impl SundialApp {
         if let Some(tray) = &self.tray {
             tray.autostart_item.set_checked(enabled);
         }
+    }
+
+    fn set_theme(&mut self, mode: ThemeMode) {
+        self.theme_mode = mode;
+        let _ = self.engine.commands.send(Command::SetTheme(mode));
+        self.show_appearance();
+    }
+
+    fn set_widget_size(&mut self, ctx: &egui::Context, size: WidgetSize) {
+        self.widget_size = size;
+        ctx.send_viewport_cmd(ViewportCommand::InnerSize(widget::size(size.scale())));
+        self.keep_on_screen_until = Some(Instant::now() + KEEP_ON_SCREEN_FOR);
+        let _ = self.engine.commands.send(Command::SetWidgetSize(size));
+        self.show_appearance();
+    }
+
+    fn show_appearance(&self) {
+        if let Some(tray) = &self.tray {
+            tray.show_appearance(self.theme_mode, self.widget_size);
+        }
+    }
+
+    /// Resolves the palette every frame, so "Match Windows" follows a theme
+    /// change made while Sundial is running.
+    fn palette(&mut self, ctx: &egui::Context) -> theme::Palette {
+        let p = *theme::resolve(self.theme_mode, ctx.system_theme());
+        if self.applied != Some(p) {
+            theme::apply(ctx, &p);
+            self.applied = Some(p);
+        }
+        p
     }
 
     fn close_panel(&mut self) {
@@ -139,6 +194,8 @@ impl eframe::App for SundialApp {
                 }
                 TrayAction::ShowAnalytics => self.open_panel(),
                 TrayAction::ToggleAutostart => self.set_autostart(!self.autostart),
+                TrayAction::SetTheme(mode) => self.set_theme(mode),
+                TrayAction::SetWidgetSize(size) => self.set_widget_size(ctx, size),
                 TrayAction::Quit => self.quit(ctx),
             }
         }
@@ -150,6 +207,8 @@ impl eframe::App for SundialApp {
             ctx.send_viewport_cmd(ViewportCommand::Visible(false));
         }
 
+        let palette = self.palette(ctx);
+        let scale = self.widget_size.scale();
         // Copy only what the widget draws; the panel's full summary (which
         // includes every day of history) is cloned only while it is open.
         let (today, state) = {
@@ -159,18 +218,28 @@ impl eframe::App for SundialApp {
 
         egui::CentralPanel::default()
             .frame(egui::Frame::NONE)
-            .show(ctx, |ui| match widget::show(ui, today, state) {
-                widget::WidgetAction::StartDrag => {
-                    ctx.send_viewport_cmd(ViewportCommand::StartDrag)
-                }
-                widget::WidgetAction::TogglePanel => self.toggle_panel(),
-                widget::WidgetAction::ShowMenu => {
-                    if let (Some(tray), Some(hwnd)) = (&self.tray, self.hwnd) {
-                        tray.show_context_menu(hwnd);
+            .show(ctx, |ui| {
+                match widget::show(ui, today, state, &palette, scale) {
+                    widget::WidgetAction::StartDrag => {
+                        ctx.send_viewport_cmd(ViewportCommand::StartDrag)
                     }
+                    widget::WidgetAction::TogglePanel => self.toggle_panel(),
+                    widget::WidgetAction::ShowMenu => {
+                        if let (Some(tray), Some(hwnd)) = (&self.tray, self.hwnd) {
+                            tray.show_context_menu(hwnd);
+                        }
+                    }
+                    widget::WidgetAction::None => {}
                 }
-                widget::WidgetAction::None => {}
             });
+
+        if let (Some(until), Some(hwnd)) = (self.keep_on_screen_until, self.hwnd) {
+            if Instant::now() < until {
+                monitor::keep_on_work_area(hwnd);
+            } else {
+                self.keep_on_screen_until = None;
+            }
+        }
 
         // Persist the widget position whenever the OS drag finishes, in
         // physical pixels - see `monitor::window_rect`.
@@ -186,18 +255,21 @@ impl eframe::App for SundialApp {
         }
 
         if self.panel_open {
-            self.show_panel(ctx);
+            self.show_panel(ctx, &palette);
         }
     }
 }
 
 impl SundialApp {
-    fn show_panel(&mut self, ctx: &egui::Context) {
+    fn show_panel(&mut self, ctx: &egui::Context, palette: &theme::Palette) {
         let snap = self.engine.snapshot.lock().unwrap().clone();
-        let widget_rect = self
-            .hwnd
-            .and_then(monitor::window_rect)
-            .unwrap_or(egui::Rect::from_min_size(egui::Pos2::ZERO, widget::SIZE));
+        let widget_rect =
+            self.hwnd
+                .and_then(monitor::window_rect)
+                .unwrap_or(egui::Rect::from_min_size(
+                    egui::Pos2::ZERO,
+                    widget::size(self.widget_size.scale()),
+                ));
         // Physical pixels in, but egui scales `with_position` by this.
         let ppp = ctx.input(|i| i.viewport().native_pixels_per_point.unwrap_or(1.0));
         let pos = monitor::bottom_right_for(widget_rect, analytics::SIZE) / ppp;
@@ -230,11 +302,11 @@ impl SundialApp {
                 egui::CentralPanel::default()
                     .frame(
                         egui::Frame::NONE
-                            .fill(theme::BG)
+                            .fill(palette.bg)
                             .corner_radius(theme::RADIUS),
                     )
                     .show(ctx, |ui| {
-                        analytics::show(ui, &snap.summary, snap.state, today_index);
+                        analytics::show(ui, &snap.summary, snap.state, today_index, palette);
                     });
 
                 escaped = ctx.input(|i| i.key_pressed(egui::Key::Escape));
