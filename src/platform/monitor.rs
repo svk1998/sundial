@@ -1,8 +1,8 @@
 use egui::{Pos2, Rect, Vec2};
 use windows::Win32::Foundation::{HWND, POINT, RECT};
 use windows::Win32::Graphics::Gdi::{
-    GetMonitorInfoW, MonitorFromPoint, MonitorFromRect, MONITORINFO, MONITOR_DEFAULTTONEAREST,
-    MONITOR_DEFAULTTONULL,
+    CreateRoundRectRgn, GetMonitorInfoW, MonitorFromPoint, MonitorFromRect, SetWindowRgn,
+    MONITORINFO, MONITOR_DEFAULTTONEAREST, MONITOR_DEFAULTTONULL,
 };
 use windows::Win32::UI::WindowsAndMessaging::{
     FindWindowW, GetWindowRect, IsWindowVisible, SetWindowPos, ShowWindow, SWP_NOACTIVATE,
@@ -77,6 +77,27 @@ pub fn move_window(raw: isize, pos: Pos2) {
             SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE,
         );
     }
+}
+
+/// Clips a window to a rounded rectangle of its current size. The windows are
+/// drawn with rounded corners over a transparent background, but where the
+/// GPU surface has no alpha (seen with the analytics panel) that background
+/// comes out opaque black, showing square black corners. Clipping the window
+/// itself makes the corners transparent whatever the renderer does.
+///
+/// Returns the size the region was made for, so callers re-apply on resize.
+pub fn round_corners(raw: isize, radius_px: i32) -> Option<Vec2> {
+    let rect = window_rect(raw)?;
+    let (w, h) = (rect.width() as i32, rect.height() as i32);
+    unsafe {
+        // +1: the region's right and bottom edges are exclusive.
+        let region = CreateRoundRectRgn(0, 0, w + 1, h + 1, radius_px * 2, radius_px * 2);
+        // On success the system owns the region; don't delete it.
+        if SetWindowRgn(hwnd(raw), region, true) == 0 {
+            return None;
+        }
+    }
+    Some(rect.size())
 }
 
 /// Hides a window directly through Win32. Use when the window was shown behind

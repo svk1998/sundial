@@ -41,6 +41,10 @@ pub struct SundialApp {
     /// asynchronously, so this runs for a moment after one rather than once;
     /// it is time-boxed so it never fights a drag across monitors.
     keep_on_screen_until: Option<Instant>,
+    /// Window sizes the rounded clip regions were last made for; see
+    /// `monitor::round_corners`.
+    widget_clip: Option<egui::Vec2>,
+    panel_clip: Option<(isize, egui::Vec2)>,
     /// The panel closes on focus loss, but it does not hold focus on the frame
     /// it is created - the widget still does. Without this latch it would
     /// dismiss itself immediately and could never be seen.
@@ -94,6 +98,8 @@ impl SundialApp {
             widget_size,
             applied: None,
             keep_on_screen_until: Some(Instant::now() + KEEP_ON_SCREEN_FOR),
+            widget_clip: None,
+            panel_clip: None,
             panel_focused_once: false,
             last_pos: None,
             hwnd,
@@ -250,6 +256,14 @@ impl eframe::App for SundialApp {
             }
         }
 
+        if let Some(hwnd) = self.hwnd {
+            let size = monitor::window_rect(hwnd).map(|r| r.size());
+            if size.is_some() && size != self.widget_clip {
+                let radius = corner_radius_px(ctx, self.widget_size.scale());
+                self.widget_clip = monitor::round_corners(hwnd, radius);
+            }
+        }
+
         // Persist the widget position whenever the OS drag finishes, in
         // physical pixels - see `monitor::window_rect`.
         if let Some(rect) = self.hwnd.and_then(monitor::window_rect) {
@@ -341,6 +355,11 @@ impl SundialApp {
                 if rect.min != target {
                     monitor::move_window(panel, target);
                 }
+                // A reopened panel is a new window, so key the clip on the handle.
+                if self.panel_clip != Some((panel, rect.size())) {
+                    let radius = corner_radius_px(ctx, 1.0);
+                    self.panel_clip = monitor::round_corners(panel, radius).map(|s| (panel, s));
+                }
             }
         }
 
@@ -354,4 +373,10 @@ impl SundialApp {
             self.close_panel();
         }
     }
+}
+
+/// `theme::RADIUS` in physical pixels for the window currently being drawn.
+fn corner_radius_px(ctx: &egui::Context, scale: f32) -> i32 {
+    let ppp = ctx.input(|i| i.viewport().native_pixels_per_point.unwrap_or(1.0));
+    (f32::from(theme::RADIUS) * scale * ppp).round() as i32
 }
